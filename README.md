@@ -9,9 +9,15 @@ An open-source, completely free, interactive geography platform built with React
 | Map   | Regions | Diagram modes | Filters |
 |-------|---------|---------------|---------|
 | India | 28 states + 8 union territories (726 districts) | Outline, Inline (district boundaries) | — |
-| World | ~186 countries | Outline | Continent (the map zooms to the chosen continent) |
+| World | ~186 countries | Outline (coastlines), Inline (country borders) | Continent (the map zooms to the chosen continent) |
 
-**How a round works:** a random shape appears. The student identifies it and drags it to its correct position on the map. Wrong drops bounce back; after two misses the correct area is highlighted, after three it is revealed. "Show name" turns the challenge into a learning mode.
+**How a round works:** each question shows a region's name and shape. The student drags it onto the map and gets an accuracy score: the share of the shape that overlaps its real position, plus the distance in km.
+
+**Game feel:** a 3D map slab on a wave-patterned ocean, chunky pressable buttons, the Baloo 2 and Nunito fonts, stars, streaks and points, and a best score saved on the device (no account).
+- 100%: a firework blast from the placed region, a flash, confetti rain and a PERFECT badge (plus a haptic buzz on phones)
+- 80–99%: a confetti burst and a GREAT badge
+- 50–79%: sparkling stars and a NICE badge
+- below 50%: a calm, motivating card with a location tip (e.g. "Kerala is in the south-west of India. You were too far north.")
 
 **Two layouts, same game**
 - *Phone* (narrow screens): map on top, shape tray at the bottom.

@@ -1,32 +1,68 @@
 import { useWindowDimensions } from 'react-native';
 
+/** "Explorer" palette: grape ink, violet primary, sunny gold rewards, sandy 3D land on a bright ocean. */
 export const colors = {
-  bg: '#F6F6F3',
+  bg: '#F4F1FF',
+  bgDeep: '#E7E0FF',
   surface: '#FFFFFF',
-  ink: '#16191D',
-  inkSoft: '#5B6168',
-  line: '#E3E4E0',
-  land: '#DADDD6',
-  landFaded: '#E8EAE5',
-  landStroke: '#FFFFFF',
-  sea: '#EDF3F7',
-  accent: '#2F5BEA',
-  accentSoft: '#E6ECFD',
-  correct: '#1F9D55',
-  correctSoft: '#E3F5EA',
-  wrong: '#D93B3B',
-  wrongSoft: '#FBE7E7',
-  hint: '#E89B0C',
+  surfaceLip: '#DCD3FA',
+  ink: '#22184A',
+  inkSoft: '#6B6390',
+  line: '#E4DEF7',
+
+  primary: '#6C47FF',
+  primaryDark: '#4B2ED1',
+  primarySoft: '#EEE9FF',
+  sun: '#FFC83D',
+  sunDark: '#E0A400',
+  coral: '#FF6B6B',
+  mint: '#20C997',
+  sky: '#3BA3FF',
+
+  ocean: '#BFE7F8',
+  oceanDeep: '#A3DAF2',
+  wave: '#D9F2FC',
+
+  landTop: '#FFF0D2',
+  landSide: '#D4AE72',
+  landStroke: '#EED9AE',
+  landFadedTop: '#F7EEDC',
+  landFadedSide: '#E2D3B4',
+  border: '#7A5A30',
+  shadow: '#2A1F5C',
 };
 
-// Soft, distinguishable fills for regions once they are placed.
-export const placedPalette = ['#8FB8F2', '#9FD8B4', '#F5C58A', '#E9A7B8', '#B9A9EC', '#93D3D6', '#F2DB86'];
+export const fonts = {
+  display: 'Baloo2_800ExtraBold',
+  displayBold: 'Baloo2_700Bold',
+  body: 'Nunito_600SemiBold',
+  bodyBold: 'Nunito_800ExtraBold',
+  black: 'Nunito_900Black',
+};
 
-export function paletteFor(id: string) {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return placedPalette[h % placedPalette.length];
+export type Tier = 'perfect' | 'great' | 'good' | 'close' | 'missed';
+
+export type Rating = {
+  tier: Tier;
+  label: string;
+  /** strong text colour */
+  color: string;
+  /** top face of a placed region */
+  fill: string;
+  /** extruded side of a placed region */
+  side: string;
+  stars: 0 | 1 | 2 | 3;
+};
+
+export function rate(accuracy: number): Rating {
+  if (accuracy >= 100) return { tier: 'perfect', label: 'Perfect', color: '#B07A00', fill: '#FFD54A', side: '#E0A400', stars: 3 };
+  if (accuracy >= 80) return { tier: 'great', label: 'Great', color: '#13895A', fill: '#63DDA2', side: '#22A66A', stars: 2 };
+  if (accuracy >= 50) return { tier: 'good', label: 'Good', color: '#2F6FC0', fill: '#94C8FF', side: '#4D93E0', stars: 1 };
+  if (accuracy > 0) return { tier: 'close', label: 'Close', color: '#C15A1C', fill: '#FFB585', side: '#E07B3C', stars: 0 };
+  return { tier: 'missed', label: 'Missed', color: '#C93A3A', fill: '#FF9F9F', side: '#E05656', stars: 0 };
 }
+
+export const RATING_LEGEND = [100, 90, 60, 20, 0].map(rate);
 
 export type LayoutMode = 'phone' | 'board';
 
@@ -35,6 +71,6 @@ export function useLayoutMode(): { mode: LayoutMode; width: number; height: numb
   const { width, height } = useWindowDimensions();
   const mode: LayoutMode = width >= 1000 || (width >= 760 && width > height) ? 'board' : 'phone';
   // Type/spacing scale: bigger on very large screens so it reads from the back of a classroom.
-  const k = mode === 'board' ? Math.min(1.6, Math.max(1.1, width / 1200)) : 1;
+  const k = mode === 'board' ? Math.min(1.6, Math.max(1.05, width / 1250)) : 1;
   return { mode, width, height, s: (n) => Math.round(n * k) };
 }

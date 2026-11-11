@@ -80,14 +80,54 @@ export function measurePlacement(r: Region, dx: number, dy: number, slackUnits: 
   return { accuracy: Math.round((hit / count) * 100), km };
 }
 
-export type Rating = { label: string; color: string; fill: string };
+// ---- feedback copy --------------------------------------------------------------
 
-export function rate(accuracy: number): Rating {
-  if (accuracy >= 90) return { label: 'Perfect', color: '#1F8A4C', fill: '#7CC99A' };
-  if (accuracy >= 70) return { label: 'Great', color: '#4D8F1F', fill: '#B9DE8F' };
-  if (accuracy >= 45) return { label: 'Close', color: '#A87300', fill: '#F3D27A' };
-  if (accuracy > 0) return { label: 'Nearly', color: '#B4561A', fill: '#F2B07E' };
-  return { label: 'Missed', color: '#C03434', fill: '#EBA3A3' };
+const pick = <T,>(xs: T[]) => xs[Math.floor(Math.random() * xs.length)];
+
+export const CHEERS = {
+  perfect: ['Bullseye!', 'Geo genius!', 'Pinpoint perfect!', 'Map master!', 'Nailed it!'],
+  great: ['Awesome!', 'So close to perfect!', 'Sharp eyes!', 'Brilliant!'],
+  good: ['Nice!', 'Getting there!', 'Good placement!'],
+  close: [
+    "Almost! Focus on its neighbours and you'll get the next one.",
+    'Every explorer misses sometimes. Deep breath, you can do this!',
+    "You're learning — that's how great map-makers start.",
+  ],
+  missed: [
+    "Don't worry! Look at the green outline and remember it.",
+    'Mistakes draw the map in your memory. Keep going!',
+    'Focus mode on — you can totally get the next one!',
+  ],
+};
+
+export function cheer(tier: keyof typeof CHEERS) {
+  return pick(CHEERS[tier]);
 }
 
-export const RATING_LEGEND = [95, 80, 55, 20, 0].map(rate);
+function compass(dx: number, dy: number, still = 0.12): string {
+  // dx east+, dy south+ (screen space). Returns e.g. "north-west"
+  const len = Math.hypot(dx, dy) || 1;
+  const ns = dy / len < -still * 3 ? 'north' : dy / len > still * 3 ? 'south' : '';
+  const ew = dx / len > still * 3 ? 'east' : dx / len < -still * 3 ? 'west' : '';
+  return ns && ew ? `${ns}-${ew}` : ns || ew;
+}
+
+/** A short, location-based tip, e.g. "Kerala is in the south-west of India. You were too far north." */
+export function placementTip(map: MapDefinition, r: Region, dx: number, dy: number): string {
+  const { width, height } = map.data;
+  let where: string;
+  if (map.id === 'india') {
+    const d = compass(r.cx - width / 2, r.cy - height / 2, 0.08);
+    where = d ? `${r.name} is in the ${d} of India.` : `${r.name} is in central India.`;
+  } else {
+    where = r.group ? `${r.name} is in ${r.group}.` : '';
+  }
+  const off = compass(dx, dy);
+  return off ? `${where} You were too far ${off}.` : where;
+}
+
+/** Stars and points for one answer. Streaks of strong answers add a bonus. */
+export function pointsFor(accuracy: number, streak: number) {
+  const bonus = accuracy >= 80 && streak >= 2 ? Math.min(streak, 5) * 10 : 0;
+  return { base: accuracy, bonus, total: accuracy + bonus };
+}
