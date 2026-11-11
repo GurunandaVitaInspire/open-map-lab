@@ -1,22 +1,39 @@
 {
-  "name": "app-tmp",
+  "name": "open-map-learn",
   "version": "1.0.0",
-  "main": "index.ts",
+  "main": "expo-router/entry",
   "dependencies": {
+    "@expo/metro-runtime": "~58.0.17",
     "expo": "~58.0.24",
+    "expo-constants": "~58.0.16",
+    "expo-linking": "~58.0.17",
+    "expo-router": "~58.0.31",
     "expo-status-bar": "~58.0.5",
     "react": "19.3.0",
-    "react-native": "0.88.1"
+    "react-dom": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-safe-area-context": "~5.11.1",
+    "react-native-screens": "~4.30.1",
+    "react-native-svg": "15.16.0",
+    "react-native-web": "^0.21.4"
   },
   "devDependencies": {
+    "@types/d3-geo": "^3.1.1",
     "@types/react": "~19.3.0",
-    "typescript": "~6.0.3"
+    "d3-geo": "^3.1.2",
+    "topojson-client": "^3.1.0",
+    "topojson-server": "^3.0.1",
+    "topojson-simplify": "^3.0.3",
+    "typescript": "~6.0.3",
+    "world-atlas": "^2.0.2"
   },
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "build:maps": "node scripts/build-maps.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "private": true
 }

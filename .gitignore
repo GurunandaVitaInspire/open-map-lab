@@ -39,3 +39,9 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# large raw map source (re-download, see README)
+data-sources/ne_10m_admin_0_countries_ind.geojson
+
+# machine-specific preview config
+.claude/launch.json
