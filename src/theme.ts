@@ -75,6 +75,7 @@ export function useLayoutMode(): { mode: LayoutMode; width: number; height: numb
   const { width, height } = useWindowDimensions();
   const mode: LayoutMode = width >= 1000 || (width >= 760 && width > height) ? 'board' : 'phone';
   // Type/spacing scale: bigger on very large screens so it reads from the back of a classroom.
-  const k = mode === 'board' ? Math.min(1.6, Math.max(1.05, width / 1250)) : 1;
+  // Limited by height too, so wide-but-short screens (laptops, zoomed browsers) never overflow.
+  const k = mode === 'board' ? Math.min(1.6, Math.max(0.85, Math.min(width / 1250, height / 800))) : 1;
   return { mode, width, height, s: (n) => Math.round(n * k) };
 }

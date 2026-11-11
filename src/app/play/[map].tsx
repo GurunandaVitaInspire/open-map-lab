@@ -1,7 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
-import { Animated, Easing, PanResponder, Platform, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { Animated, Easing, PanResponder, Platform, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 import { OceanBackdrop } from '../../components/Backdrops';
@@ -324,7 +324,9 @@ export default function Play() {
       onHome={() => router.replace('/')}
     />
   ) : current ? (
-    <Card lip={board ? 8 : 6} style={[board ? { width: s(360), padding: s(22), gap: s(16) } : styles.sheet, !board && { gap: 12 }]}>
+    <Card lip={board ? 8 : 6} style={[board ? { width: s(360), padding: s(22), gap: s(14) } : [styles.sheet, { gap: 12 }], styles.panel]}>
+      {/* content scrolls if it is taller than the screen; the action button below always stays visible */}
+      <ScrollView style={styles.panelScroll} contentContainerStyle={{ gap: board ? s(16) : 12 }} showsVerticalScrollIndicator={false}>
       <View style={board ? { gap: s(16) } : { flexDirection: 'row', alignItems: 'center', gap: 12 }}>
         <View style={board ? { gap: s(2) } : { flex: 1, gap: 2 }}>
           <Label size={s(11)}>{reviewing ? 'Result' : `Find & place this ${map.unit}`}</Label>
@@ -364,6 +366,7 @@ export default function Play() {
       </View>
 
       {answer && <ResultBlock answer={answer} s={s} board={board} streak={streak} map={map} mode={mode} />}
+      </ScrollView>
 
       {reviewing ? (
         <Button
@@ -572,7 +575,8 @@ function Results(props: {
   const weak = answers.filter((a) => (a.placement?.accuracy ?? 0) < 50).map((a) => a.region.name).slice(0, 6);
 
   return (
-    <Card lip={8} style={[board ? { width: s(360), padding: s(22) } : styles.sheet, { gap: s(14) }]}>
+    <Card lip={8} style={[board ? { width: s(360), padding: s(22) } : styles.sheet, { gap: s(14) }, styles.panel]}>
+      <ScrollView style={styles.panelScroll} contentContainerStyle={{ gap: s(14) }} showsVerticalScrollIndicator={false}>
       <View style={{ alignItems: 'center', gap: s(4) }}>
         <Label size={s(11)}>Round complete</Label>
         <StarsRow count={roundStars} size={s(board ? 44 : 34)} />
@@ -601,6 +605,7 @@ function Results(props: {
       {weak.length > 0 && (
         <Text style={[styles.tip, { fontSize: s(13), textAlign: 'center' }]}>Practise next: {weak.join(', ')}</Text>
       )}
+      </ScrollView>
       <View style={{ gap: s(10) }}>
         <Button label="Play again" size={s(17)} onPress={props.onAgain} />
         <Button label="Choose map" variant="soft" size={s(16)} onPress={props.onHome} />
@@ -648,7 +653,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.92)',
     borderRadius: 12,
   },
-  sheet: { marginHorizontal: 10, marginBottom: 8, padding: 14 },
+  sheet: { marginHorizontal: 10, marginBottom: 8, padding: 14, maxHeight: '64%' },
+  panel: { flexShrink: 1, overflow: 'hidden' },
+  panelScroll: { flexGrow: 0, flexShrink: 1 },
   name: { fontFamily: fonts.display, color: colors.ink },
   sub: { fontFamily: fonts.body, color: colors.inkSoft, lineHeight: 20 },
   pct: { fontFamily: fonts.display, letterSpacing: -1 },
