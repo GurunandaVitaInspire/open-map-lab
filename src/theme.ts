@@ -1,4 +1,4 @@
-import { useWindowDimensions } from 'react-native';
+import { Platform, useWindowDimensions } from 'react-native';
 
 /** "Explorer" palette: grape ink, violet primary, sunny gold rewards, sandy 3D land on a bright ocean. */
 export const colors = {
@@ -32,12 +32,16 @@ export const colors = {
   shadow: '#2A1F5C',
 };
 
+// On the web, fall back to a clean system sans-serif while the custom fonts download.
+const family = (name: string) =>
+  Platform.OS === 'web' ? `${name}, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif` : name;
+
 export const fonts = {
-  display: 'Baloo2_800ExtraBold',
-  displayBold: 'Baloo2_700Bold',
-  body: 'Nunito_600SemiBold',
-  bodyBold: 'Nunito_800ExtraBold',
-  black: 'Nunito_900Black',
+  display: family('Baloo2_800ExtraBold'),
+  displayBold: family('Baloo2_700Bold'),
+  body: family('Nunito_600SemiBold'),
+  bodyBold: family('Nunito_800ExtraBold'),
+  black: family('Nunito_900Black'),
 };
 
 export type Tier = 'perfect' | 'great' | 'good' | 'close' | 'missed';
