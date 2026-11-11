@@ -77,10 +77,7 @@ export default function Home() {
                   />
                 </View>
                 <Text style={[styles.help, { fontSize: s(13), marginTop: s(8) }]}>
-                  {effectiveMode === 'outline'
-                    ? 'Only the outer boundary of each shape is shown.'
-                    : 'Shapes include internal district boundaries.'}
-                  {!map.supportsInline ? ' Inline mode is available for India.' : ''}
+                  {map.modeHelp[effectiveMode]}
                 </Text>
               </View>
 

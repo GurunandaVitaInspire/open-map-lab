@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
+import { useCallback, useMemo, useRef, useState, type ComponentRef } from 'react';
 import {
   Animated,
   PanResponder,
@@ -10,16 +10,17 @@ import {
   type LayoutChangeEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MapCanvas, type RegionStatus } from '../../components/MapCanvas';
+import { MapCanvas, type Attempt } from '../../components/MapCanvas';
 import { RegionShape, fitScale } from '../../components/RegionShape';
-import { Button, Chip } from '../../components/ui';
+import { Button } from '../../components/ui';
 import { getMap, getView, type Region } from '../../data/maps';
-import { buildQuestions, isCorrectDrop, type DiagramMode } from '../../lib/game';
+import { buildQuestions, measurePlacement, rate, RATING_LEGEND, type DiagramMode, type Placement } from '../../lib/game';
 import { colors, useLayoutMode } from '../../theme';
 
-type Feedback = { kind: 'correct' | 'wrong' | 'reveal'; text: string } | null;
+type Answer = { region: Region; placement: Placement | null }; // null = skipped
 
-const MAX_TRIES = 3;
+/** Screen pixels of jitter forgiven when scoring a drop. */
+const SLACK_PX = 6;
 
 export default function Play() {
   const params = useLocalSearchParams<{ map: string; mode?: string; group?: string; count?: string }>();
@@ -38,30 +39,34 @@ export default function Play() {
     [map.id, mode, group, count, round],
   );
   const [index, setIndex] = useState(0);
-  const [status, setStatus] = useState<Record<string, RegionStatus>>({});
-  const [tries, setTries] = useState(0);
-  const [firstTry, setFirstTry] = useState(0);
-  const [mistakes, setMistakes] = useState(0);
-  const [hintId, setHintId] = useState<string | null>(null);
-  const [flashId, setFlashId] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<Feedback>(null);
-  const [showName, setShowName] = useState(false);
+  const [answers, setAnswers] = useState<Answer[]>([]);
+  const [attempt, setAttempt] = useState<Attempt | null>(null);
   const [dragging, setDragging] = useState(false);
-  const [busy, setBusy] = useState(false);
 
   const current: Region | undefined = questions[index];
   const finished = index >= questions.length;
+  const answer = answers.length > index ? answers[index] : undefined; // set once this question is answered
+  const reviewing = !!answer;
+
+  const scores = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const a of answers) out[a.region.id] = a.placement?.accuracy ?? 0;
+    return out;
+  }, [answers]);
+  const average = answers.length
+    ? Math.round(answers.reduce((n, a) => n + (a.placement?.accuracy ?? 0), 0) / answers.length)
+    : null;
 
   const restart = () => {
     setRound((r) => r + 1);
     setIndex(0);
-    setStatus({});
-    setTries(0);
-    setFirstTry(0);
-    setMistakes(0);
-    setHintId(null);
-    setFeedback(null);
-    setBusy(false);
+    setAnswers([]);
+    setAttempt(null);
+  };
+
+  const next = () => {
+    setAttempt(null);
+    setIndex((i) => i + 1);
   };
 
   // ---- geometry: where the map sits on screen -----------------------------
@@ -91,32 +96,12 @@ export default function Play() {
 
   // ---- drag & drop ----------------------------------------------------------
   // Keep the latest values in a ref so the PanResponder (created once) never sees stale state.
-  const live = useRef({ current, scale, busy, finished });
-  live.current = { current, scale, busy, finished };
+  const live = useRef({ locked: false });
+  live.current.locked = reviewing || finished || !current;
 
   const pan = useRef(new Animated.ValueXY()).current;
   // On touch devices lift the piece above the finger so it stays visible.
   const lift = Platform.OS === 'web' ? 0 : 56;
-
-  const handleDrop = useRef<(x: number, y: number) => void>(() => {});
-  handleDrop.current = (pageX, pageY) => {
-    if (!current) return;
-    const { svg } = origin.current;
-    const mx = view.x + (pageX - svg.x) / scale;
-    const my = view.y + (pageY - lift - svg.y) / scale;
-    const insideMap = mx >= view.x && my >= view.y && mx <= view.x + view.w && my <= view.y + view.h;
-    if (!insideMap) {
-      returnPiece();
-      return;
-    }
-    if (isCorrectDrop(current, mx, my, scale)) {
-      setDragging(false);
-      onCorrect(current);
-    } else {
-      onWrong(current);
-      returnPiece();
-    }
-  };
 
   const returnPiece = () => {
     const { card, root } = origin.current;
@@ -128,11 +113,31 @@ export default function Play() {
     }).start(() => setDragging(false));
   };
 
+  const handleDrop = useRef<(x: number, y: number) => void>(() => {});
+  handleDrop.current = (pageX, pageY) => {
+    if (!current || reviewing) return;
+    const { svg } = origin.current;
+    // centroid of the dropped piece, in map units
+    const mx = view.x + (pageX - svg.x) / scale;
+    const my = view.y + (pageY - lift - svg.y) / scale;
+    const insideMap = mx >= view.x && my >= view.y && mx <= view.x + view.w && my <= view.y + view.h;
+    if (!insideMap) {
+      returnPiece(); // dropped off the map: no attempt, try again
+      return;
+    }
+    const dx = mx - current.cx;
+    const dy = my - current.cy;
+    const placement = measurePlacement(current, dx, dy, SLACK_PX / scale);
+    setDragging(false);
+    setAttempt({ id: current.id, dx, dy });
+    setAnswers((a) => [...a, { region: current, placement }]);
+  };
+
   const responder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => !live.current.busy && !live.current.finished,
-        onMoveShouldSetPanResponder: () => !live.current.busy && !live.current.finished,
+        onStartShouldSetPanResponder: () => !live.current.locked,
+        onMoveShouldSetPanResponder: () => !live.current.locked,
         onPanResponderTerminationRequest: () => false,
         onPanResponderGrant: (_e, g) => {
           measure();
@@ -145,7 +150,7 @@ export default function Play() {
           pan.setValue({ x: g.moveX - root.x, y: g.moveY - root.y });
         },
         onPanResponderRelease: (_e, g) => {
-          // a simple tap (no movement) just bounces back
+          // a simple tap (no movement) just puts the piece back
           if (Math.abs(g.dx) < 4 && Math.abs(g.dy) < 4) {
             setDragging(false);
             return;
@@ -157,73 +162,16 @@ export default function Play() {
     [measure, pan],
   );
 
-  // ---- outcomes -------------------------------------------------------------
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  useEffect(() => () => timers.current.forEach(clearTimeout), []);
-  const later = (fn: () => void, ms: number) => timers.current.push(setTimeout(fn, ms));
-
-  const next = () => {
-    setIndex((i) => i + 1);
-    setTries(0);
-    setHintId(null);
-    setFlashId(null);
-    setFeedback(null);
-    setBusy(false);
-  };
-
-  const describe = (r: Region) =>
-    mode === 'inline' && r.districts?.length ? `${r.name} · ${r.districts.length} districts` : r.name;
-
-  const onCorrect = (r: Region) => {
-    setBusy(true);
-    setStatus((st) => ({ ...st, [r.id]: 'placed' }));
-    if (tries === 0) setFirstTry((n) => n + 1);
-    setHintId(null);
-    setFlashId(r.id);
-    setFeedback({ kind: 'correct', text: describe(r) });
-    later(next, 1300);
-  };
-
-  const onWrong = (r: Region) => {
-    const t = tries + 1;
-    setTries(t);
-    setMistakes((n) => n + 1);
-    if (t >= MAX_TRIES) {
-      setBusy(true);
-      setStatus((st) => ({ ...st, [r.id]: 'revealed' }));
-      setHintId(r.id);
-      setFeedback({ kind: 'reveal', text: `It was ${describe(r)}` });
-      later(next, 2200);
-    } else {
-      if (t >= 2) setHintId(r.id);
-      setFeedback({ kind: 'wrong', text: t >= 2 ? 'Not quite — look for the highlighted area' : 'Not quite — try again' });
-    }
-  };
-
   const skip = () => {
-    if (!current || busy) return;
-    setBusy(true);
-    setStatus((st) => ({ ...st, [current.id]: 'revealed' }));
-    setHintId(current.id);
-    setFeedback({ kind: 'reveal', text: `That was ${describe(current)}` });
-    later(next, 1800);
+    if (!current || reviewing) return;
+    setAttempt({ id: current.id, dx: 0, dy: 0 });
+    setAnswers((a) => [...a, { region: current, placement: null }]);
   };
-
-  const hint = () => current && !busy && setHintId(current.id);
 
   // ---- layout -------------------------------------------------------------
-  const cardBox = board ? s(220) : 116;
+  const cardBox = board ? s(200) : 104;
   const pieceScale = current ? fitScale(current, cardBox) : 1;
-  const unit = map.unit;
-  const done = index;
   const total = questions.length;
-
-  const prompt = !current
-    ? ''
-    : showName
-      ? `Place ${current.name}`
-      : `Which ${unit} is this?`;
-
   const anchor = current
     ? { left: -(current.cx - current.bbox[0]) * scale, top: -(current.cy - current.bbox[1]) * scale - lift }
     : { left: 0, top: 0 };
@@ -245,68 +193,88 @@ export default function Play() {
           {group ? ` · ${group}` : ''} · {mode === 'inline' ? 'Inline' : 'Outline'}
         </Text>
         <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${total ? (Math.min(done, total) / total) * 100 : 0}%` }]} />
+          <View style={[styles.progressFill, { width: `${total ? (answers.length / total) * 100 : 0}%` }]} />
         </View>
       </View>
-      <Text style={[styles.score, { fontSize: s(15) }]}>
-        {firstTry}/{total}
-      </Text>
+      <View style={{ alignItems: 'flex-end' }}>
+        <Text style={[styles.score, { fontSize: s(16) }]}>{average === null ? '—' : `${average}%`}</Text>
+        <Text style={[styles.scoreLabel, { fontSize: s(10) }]}>ACCURACY</Text>
+      </View>
       {Platform.OS === 'web' && board && <Button label="⛶" accessibilityLabel="Toggle full screen" variant="soft" size={s(15)} onPress={fullscreen} />}
     </View>
   );
 
-  const feedbackColor =
-    feedback?.kind === 'correct' ? colors.correct : feedback?.kind === 'wrong' ? colors.wrong : colors.inkSoft;
+  const unitWord = map.unit.charAt(0).toUpperCase() + map.unit.slice(1);
+  const extra =
+    current && mode === 'inline' && current.districts?.length ? ` · ${current.districts.length} districts` : '';
+
+  const resultBlock = answer ? (
+    answer.placement ? (
+      <View style={{ gap: s(2) }}>
+        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: s(8) }}>
+          <Text style={[styles.bigPct, { fontSize: s(board ? 44 : 30), color: rate(answer.placement.accuracy).color }]}>
+            {answer.placement.accuracy}%
+          </Text>
+          <Text style={[styles.rating, { fontSize: s(board ? 20 : 16), color: rate(answer.placement.accuracy).color }]}>
+            {rate(answer.placement.accuracy).label}
+          </Text>
+        </View>
+        <Text style={[styles.sub, { fontSize: s(14) }]}>
+          {answer.placement.km < 10 ? 'Right on the spot' : `Off by about ${answer.placement.km.toLocaleString()} km`}
+          {extra}
+        </Text>
+      </View>
+    ) : (
+      <Text style={[styles.sub, { fontSize: s(15) }]}>Skipped — its position is outlined in green.</Text>
+    )
+  ) : null;
 
   const panel = finished ? (
-    <Results
-      s={s}
-      board={board}
-      total={total}
-      firstTry={firstTry}
-      mistakes={mistakes}
-      onAgain={restart}
-      onHome={() => router.replace('/')}
-    />
+    <Results s={s} board={board} answers={answers} average={average ?? 0} onAgain={restart} onHome={() => router.replace('/')} />
   ) : current ? (
-    <View style={[styles.panel, board ? [styles.panelBoard, { width: s(340), padding: s(24), gap: s(18) }] : [styles.panelPhone, { gap: 10 }]]}>
+    <View style={[styles.panel, board ? [styles.panelBoard, { width: s(340), padding: s(24), gap: s(18) }] : [styles.panelPhone, { gap: 12 }]]}>
       <View style={board ? { gap: s(18) } : { flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-      <View style={board ? { gap: s(6) } : { flex: 1, gap: 4 }}>
-        <Text style={[styles.counter, { fontSize: s(13) }]}>
-          {Math.min(done + 1, total)} OF {total}
-        </Text>
-        <Text style={[styles.prompt, { fontSize: s(board ? 26 : 19) }]}>{prompt}</Text>
-        <Text style={[styles.sub, { fontSize: s(14) }]}>
-          {dragging ? 'Drop it where it belongs' : 'Drag the shape onto the map'}
-        </Text>
-        <Text style={[styles.feedback, { fontSize: s(board ? 18 : 15), color: feedbackColor, minHeight: s(board ? 26 : 20) }]}>
-          {feedback ? (feedback.kind === 'correct' ? `✓ ${feedback.text}` : feedback.text) : ' '}
-        </Text>
-      </View>
+        <View style={board ? { gap: s(6) } : { flex: 1, gap: 4 }}>
+          <Text style={[styles.counter, { fontSize: s(12) }]}>
+            {unitWord.toUpperCase()} {Math.min(index + 1, total)} OF {total}
+          </Text>
+          <Text style={[styles.prompt, { fontSize: s(board ? 30 : 22) }]} numberOfLines={2}>
+            {current.name}
+          </Text>
+          {reviewing ? (
+            resultBlock
+          ) : (
+            <Text style={[styles.sub, { fontSize: s(14) }]}>
+              {dragging ? 'Drop it where you think it is' : `Drag the shape to where this ${map.unit} is`}
+            </Text>
+          )}
+        </View>
 
-      <View
-        ref={cardRef}
-        onLayout={() => requestAnimationFrame(measure)}
-        {...responder.panHandlers}
-        style={[
-          styles.card,
-          { width: cardBox + s(28), height: cardBox + s(28), borderRadius: s(18) },
-          feedback?.kind === 'wrong' && { borderColor: colors.wrong },
-          Platform.OS === 'web' && ({ cursor: dragging ? 'grabbing' : 'grab', touchAction: 'none', userSelect: 'none' } as object),
-        ]}
-        accessibilityLabel={`Shape of a ${unit}. Drag it onto the map.`}
-      >
-        <View style={{ opacity: dragging || busy ? 0.18 : 1 }} pointerEvents="none">
-          <RegionShape region={current} scale={pieceScale} inline={mode === 'inline'} strokePx={board ? 2.5 : 1.8} />
+        <View
+          ref={cardRef}
+          onLayout={() => requestAnimationFrame(measure)}
+          {...responder.panHandlers}
+          style={[
+            styles.card,
+            { width: cardBox + s(24), height: cardBox + s(24), borderRadius: s(16) },
+            Platform.OS === 'web' &&
+              ({ cursor: reviewing ? 'default' : dragging ? 'grabbing' : 'grab', touchAction: 'none', userSelect: 'none' } as object),
+          ]}
+          accessibilityLabel={`Shape of ${current.name}. Drag it onto the map.`}
+        >
+          <View style={{ opacity: dragging || reviewing ? 0.2 : 1 }} pointerEvents="none">
+            <RegionShape region={current} scale={pieceScale} inline={mode === 'inline'} strokePx={board ? 2.5 : 1.8} />
+          </View>
         </View>
       </View>
-      </View>
 
-      <View style={[styles.actions, { gap: s(8) }]}>
-        <Chip size={s(13)} label={showName ? 'Name shown' : 'Show name'} selected={showName} onPress={() => setShowName((v) => !v)} />
-        <Chip size={s(13)} label="Hint" selected={false} onPress={hint} disabled={busy} />
-        <Chip size={s(13)} label="Skip" selected={false} onPress={skip} disabled={busy} />
-      </View>
+      {reviewing ? (
+        <Button label={index + 1 >= total ? 'See results' : 'Next →'} size={s(17)} onPress={next} />
+      ) : (
+        <View style={{ flexDirection: 'row', justifyContent: board ? 'flex-start' : 'flex-end' }}>
+          <Button label="Skip" variant="soft" size={s(14)} onPress={skip} />
+        </View>
+      )}
     </View>
   ) : null;
 
@@ -323,22 +291,25 @@ export default function Play() {
                   view={view}
                   focusGroup={group}
                   scale={scale}
-                  status={status}
+                  scores={scores}
+                  showBorders={mode === 'inline'}
                   showInner={mode === 'inline'}
-                  hintId={hintId}
-                  flashId={flashId}
+                  attempt={attempt}
                 />
               )}
             </View>
+            {reviewing && answer?.placement && (
+              <View style={[styles.mapLegend, { padding: s(8), gap: s(10) }]} pointerEvents="none">
+                <LegendDot color={colors.accent} label="Your placement" size={s(12)} dashed />
+                <LegendDot color={colors.correct} label="Actual position" size={s(12)} />
+              </View>
+            )}
           </View>
           {panel}
         </View>
 
         {dragging && current && scale > 0 && (
-          <Animated.View
-            pointerEvents="none"
-            style={[styles.floating, { transform: pan.getTranslateTransform() }]}
-          >
+          <Animated.View pointerEvents="none" style={[styles.floating, { transform: pan.getTranslateTransform() }]}>
             <View style={{ position: 'absolute', left: anchor.left, top: anchor.top }}>
               <RegionShape
                 region={current}
@@ -349,7 +320,7 @@ export default function Play() {
                 strokePx={1.5}
               />
             </View>
-            {/* target ring marks the drop point — essential for tiny regions */}
+            {/* ring marks the drop point — essential for tiny regions */}
             <View style={[styles.ring, { top: -lift - 14, left: -14 }]} />
           </Animated.View>
         )}
@@ -358,27 +329,58 @@ export default function Play() {
   );
 }
 
+function LegendDot({ color, label, size, dashed }: { color: string; label: string; size: number; dashed?: boolean }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+      <View style={{ width: size * 1.6, height: 0, borderTopWidth: 2, borderColor: color, borderStyle: dashed ? 'dashed' : 'solid' }} />
+      <Text style={{ fontSize: size, color: colors.ink, fontWeight: '600' }}>{label}</Text>
+    </View>
+  );
+}
+
 function Results(props: {
   s: (n: number) => number;
   board: boolean;
-  total: number;
-  firstTry: number;
-  mistakes: number;
+  answers: Answer[];
+  average: number;
   onAgain: () => void;
   onHome: () => void;
 }) {
-  const { s, board, total, firstTry, mistakes } = props;
-  const pct = total ? Math.round((firstTry / total) * 100) : 0;
-  const message = pct >= 90 ? 'Outstanding!' : pct >= 70 ? 'Great work!' : pct >= 40 ? 'Good effort!' : 'Keep practising!';
+  const { s, board, answers, average } = props;
+  const r = rate(average);
+  const message = average >= 85 ? 'Outstanding!' : average >= 65 ? 'Great work!' : average >= 40 ? 'Good effort!' : 'Keep practising!';
+  const counts = RATING_LEGEND.map((l) => ({
+    ...l,
+    n: answers.filter((a) => rate(a.placement?.accuracy ?? 0).label === l.label).length,
+  }));
+  const worst = answers
+    .filter((a) => (a.placement?.accuracy ?? 0) < 45)
+    .map((a) => a.region.name)
+    .slice(0, 6);
+
   return (
-    <View style={[styles.panel, board ? [styles.panelBoard, { width: s(340), padding: s(24) }] : styles.panelPhone, { gap: s(14), alignItems: board ? 'stretch' : 'center' }]}>
-      <View style={[{ gap: s(4) }, !board && { alignItems: 'center' }]}>
-        <Text style={[styles.counter, { fontSize: s(13) }]}>ROUND COMPLETE</Text>
-        <Text style={[styles.prompt, { fontSize: s(board ? 30 : 22) }]}>{message}</Text>
-        <Text style={[styles.sub, { fontSize: s(15) }]}>
-          {firstTry} of {total} first try · {pct}% · {mistakes} {mistakes === 1 ? 'mistake' : 'mistakes'}
-        </Text>
+    <View style={[styles.panel, board ? [styles.panelBoard, { width: s(340), padding: s(24) }] : styles.panelPhone, { gap: s(14) }]}>
+      <View style={{ gap: s(4) }}>
+        <Text style={[styles.counter, { fontSize: s(12) }]}>ROUND COMPLETE</Text>
+        <Text style={[styles.prompt, { fontSize: s(board ? 28 : 22) }]}>{message}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: s(8) }}>
+          <Text style={[styles.bigPct, { fontSize: s(board ? 44 : 32), color: r.color }]}>{average}%</Text>
+          <Text style={[styles.sub, { fontSize: s(14) }]}>average accuracy</Text>
+        </View>
       </View>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: s(10) }}>
+        {counts.map((c) => (
+          <View key={c.label} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <View style={{ width: s(12), height: s(12), borderRadius: 3, backgroundColor: c.fill }} />
+            <Text style={{ fontSize: s(13), color: colors.ink }}>
+              {c.label} <Text style={{ fontWeight: '800' }}>{c.n}</Text>
+            </Text>
+          </View>
+        ))}
+      </View>
+      {worst.length > 0 && (
+        <Text style={[styles.sub, { fontSize: s(13) }]}>Practise: {worst.join(', ')}</Text>
+      )}
       <View style={{ gap: s(8) }}>
         <Button label="Play again" size={s(16)} onPress={props.onAgain} />
         <Button label="Choose map" variant="soft" size={s(16)} onPress={props.onHome} />
@@ -395,21 +397,27 @@ const styles = StyleSheet.create({
   progressTrack: { height: 4, borderRadius: 2, backgroundColor: colors.line, overflow: 'hidden' },
   progressFill: { height: 4, backgroundColor: colors.accent },
   score: { fontWeight: '800', color: colors.ink, fontVariant: ['tabular-nums'] },
+  scoreLabel: { fontWeight: '700', color: colors.inkSoft, letterSpacing: 1 },
   body: { flex: 1 },
   mapWrap: { flex: 1, backgroundColor: colors.sea, overflow: 'hidden' },
   mapInner: { flex: 1, margin: 8, alignItems: 'center', justifyContent: 'center' },
+  mapLegend: {
+    position: 'absolute',
+    left: 8,
+    bottom: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    borderRadius: 10,
+  },
   panel: { backgroundColor: colors.surface },
   panelBoard: { borderRadius: 22, justifyContent: 'flex-start' },
-  panelPhone: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderTopWidth: 1,
-    borderTopColor: colors.line,
-  },
+  panelPhone: { paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: 1, borderTopColor: colors.line },
   counter: { fontWeight: '700', color: colors.inkSoft, letterSpacing: 1.2 },
   prompt: { fontWeight: '800', color: colors.ink, letterSpacing: -0.4 },
-  sub: { color: colors.inkSoft },
-  feedback: { fontWeight: '700' },
+  sub: { color: colors.inkSoft, lineHeight: 20 },
+  bigPct: { fontWeight: '800', fontVariant: ['tabular-nums'], letterSpacing: -1 },
+  rating: { fontWeight: '800' },
   card: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -419,7 +427,6 @@ const styles = StyleSheet.create({
     borderStyle: 'dashed',
     alignSelf: 'center',
   },
-  actions: { flexDirection: 'row', flexWrap: 'wrap' },
   floating: { position: 'absolute', left: 0, top: 0, width: 0, height: 0, overflow: 'visible' },
   ring: { position: 'absolute', width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: colors.accent },
 });

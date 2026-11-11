@@ -4,13 +4,13 @@
 //   npm run build:maps
 //
 // Output: src/data/generated/<map>.json
-//   { id, width, height, border, regions: [{ id, name, group, d, inner?, cx, cy, bbox, area, playable }] }
+//   { id, width, height, border, regions: [{ id, name, group, d, inner?, cx, cy, bbox, core, area, km, mask, playable }] }
 // All coordinates are in the map's own viewBox space (width is always 1000).
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { geoArea, geoMercator, geoNaturalEarth1, geoPath } from 'd3-geo';
+import { geoArea, geoContains, geoDistance, geoMercator, geoNaturalEarth1, geoPath } from 'd3-geo';
 import { feature, mesh } from 'topojson-client';
 import { topology } from 'topojson-server';
 import { presimplify, simplify, quantile, filter, filterWeight } from 'topojson-simplify';
@@ -29,7 +29,7 @@ function fitProjection(projection, fc) {
   const [[, y0], [, y1]] = geoPath(projection).bounds(fc);
   const height = Math.ceil(y1 - y0) + PAD * 2;
   projection.fitExtent([[PAD, PAD], [WIDTH - PAD, height - PAD]], fc);
-  return { height, path: geoPath(projection).digits(1) };
+  return { height, projection, path: geoPath(projection).digits(1) };
 }
 
 // Simplification can flip a tiny ring's winding, which d3 then reads as "the whole globe
@@ -46,7 +46,37 @@ function fixWinding(fc) {
   return fc;
 }
 
-function regionRecord(path, f, extra) {
+const MASK_CELLS = 40; // resolution of the placement-accuracy mask along the longer side
+
+// Rasterise a region into a small bitmask over its bbox. The app shifts this mask by the
+// drop offset and measures how much of the shape still overlaps itself = placement accuracy.
+function rasterMask(projection, f, [x0, y0, x1, y1]) {
+  const cell = Math.max(x1 - x0, y1 - y0, 0.5) / MASK_CELLS;
+  const w = Math.max(1, Math.ceil((x1 - x0) / cell));
+  const h = Math.max(1, Math.ceil((y1 - y0) / cell));
+  const bytes = new Uint8Array(Math.ceil((w * h) / 8));
+  let count = 0;
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      const ll = projection.invert([x0 + (i + 0.5) * cell, y0 + (j + 0.5) * cell]);
+      if (ll && geoContains(f, ll)) {
+        const k = j * w + i;
+        bytes[k >> 3] |= 1 << (k & 7);
+        count++;
+      }
+    }
+  }
+  return { w, h, cell: Math.round(cell * 1000) / 1000, count, bits: Buffer.from(bytes).toString('base64') };
+}
+
+/** Kilometres per map unit around a point (for "off by ~120 km" feedback). */
+function kmPerUnit(projection, [x, y]) {
+  const a = projection.invert([x - 0.5, y]);
+  const b = projection.invert([x + 0.5, y]);
+  return Math.round(geoDistance(a, b) * 6371 * 100) / 100;
+}
+
+function regionRecord(path, f, extra, projection) {
   const [cx, cy] = path.centroid(f);
   const [[x0, y0], [x1, y1]] = path.bounds(f);
   // bbox of the largest polygon only (e.g. mainland France without French Guiana),
@@ -71,6 +101,8 @@ function regionRecord(path, f, extra) {
     bbox: [r1(x0), r1(y0), r1(x1), r1(y1)],
     core: [r1(core[0][0]), r1(core[0][1]), r1(core[1][0]), r1(core[1][1])],
     area: Math.round(path.area(f)),
+    km: kmPerUnit(projection, [cx, cy]),
+    mask: rasterMask(projection, f, [x0, y0, x1, y1]),
   };
 }
 
@@ -91,14 +123,14 @@ function write(name, data) {
   topo = simplify(topo, quantile(topo, 0.35)); // keep 35% of vertices
 
   const states = fixWinding(feature(topo, topo.objects.states));
-  const { height, path } = fitProjection(geoMercator(), states);
+  const { height, path, projection } = fitProjection(geoMercator(), states);
   const districtGeoms = topo.objects.districts.geometries;
 
   const regions = states.features.map((f) => {
     const name = f.properties.st_nm;
     const own = districtGeoms.filter((g) => g.properties.st_nm === name);
     const inner = mesh(topo, { type: 'GeometryCollection', geometries: own }, (a, b) => a !== b);
-    const rec = regionRecord(path, f, { id: slug(name), name });
+    const rec = regionRecord(path, f, { id: slug(name), name }, projection);
     rec.inner = path(inner) ?? undefined;
     rec.districts = own.map((g) => g.properties.district).sort();
     return rec;
@@ -135,7 +167,7 @@ function write(name, data) {
   topo = filter(topo, filterWeight(topo, 0.0003));
 
   const countries = fixWinding(feature(topo, topo.objects.countries));
-  const { height, path } = fitProjection(geoNaturalEarth1(), countries);
+  const { height, path, projection } = fitProjection(geoNaturalEarth1(), countries);
 
   const seen = new Set();
   const regions = countries.features
@@ -148,10 +180,10 @@ function write(name, data) {
         id,
         name: p.NAME_EN || p.NAME,
         group: p.CONTINENT,
-      });
+      }, projection);
       return rec;
     })
-    .filter((r) => r.d);
+    .filter((r) => r.d && r.mask.count > 0);
 
   for (const r of regions) r.playable = r.area >= 25 && r.group !== 'Seven seas (open ocean)';
 
@@ -159,7 +191,8 @@ function write(name, data) {
     id: 'world',
     width: WIDTH,
     height,
-    border: null,
+    // coastlines / outer edges only — used as the "outline" base map
+    border: path(mesh(topo, topo.objects.countries, (a, b) => a === b)),
     regions: regions.sort((a, b) => a.name.localeCompare(b.name)),
   });
 }

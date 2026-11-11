@@ -16,6 +16,10 @@ export type Region = {
   /** bbox of the main landmass only */
   core: [number, number, number, number];
   area: number;
+  /** kilometres per map unit around this region */
+  km: number;
+  /** rasterised shape over bbox, used to measure placement overlap */
+  mask: { w: number; h: number; cell: number; count: number; bits: string };
   playable: boolean;
 };
 
@@ -34,6 +38,8 @@ export type MapDefinition = {
   /** singular noun used in prompts, e.g. "state" */
   unit: string;
   supportsInline: boolean;
+  /** what the base map shows in each diagram mode */
+  modeHelp: { outline: string; inline: string };
   /** optional filters a teacher can pick (e.g. continents) */
   groups?: string[];
   data: MapData;
@@ -46,6 +52,10 @@ export const MAPS: Record<MapDefinition['id'], MapDefinition> = {
     description: '28 states and 8 union territories',
     unit: 'state',
     supportsInline: true,
+    modeHelp: {
+      outline: "The map shows only India's outer border — you work out where each state sits.",
+      inline: 'The map shows state borders, and each shape includes its district boundaries.',
+    },
     data: indiaData as MapData,
   },
   world: {
@@ -53,7 +63,11 @@ export const MAPS: Record<MapDefinition['id'], MapDefinition> = {
     title: 'World',
     description: 'Countries of every continent',
     unit: 'country',
-    supportsInline: false,
+    supportsInline: true,
+    modeHelp: {
+      outline: 'The map shows only coastlines — no country borders.',
+      inline: 'The map shows every country border.',
+    },
     groups: ['Asia', 'Africa', 'Europe', 'North America', 'South America', 'Oceania'],
     data: worldData as MapData,
   },
