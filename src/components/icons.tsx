@@ -1,4 +1,4 @@
-import Svg, { Circle, G, Path } from 'react-native-svg';
+import Svg, { Circle, Path } from 'react-native-svg';
 import { colors } from '../theme';
 
 const STAR = 'M12 2.2l2.95 6.1 6.7.92-4.9 4.63 1.2 6.65L12 17.3l-5.95 3.2 1.2-6.65-4.9-4.63 6.7-.92z';
@@ -38,22 +38,6 @@ export function ExpandIcon({ size = 20, color = colors.ink }: { size?: number; c
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24">
       <Path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke={color} strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
-}
-
-/** App mark: a little 3D globe with a map pin. */
-export function LogoMark({ size = 48 }: { size?: number }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 48 48">
-      <Circle cx={24} cy={27} r={18} fill={colors.primaryDark} />
-      <Circle cx={24} cy={24} r={18} fill={colors.primary} />
-      <G fill="none" stroke="#B9A8FF" strokeWidth={1.6}>
-        <Path d="M6 24h36M24 6c-6 5-6 31 0 36M24 6c6 5 6 31 0 36M9 15h30M9 33h30" />
-      </G>
-      <Path d="M30 6.5a7 7 0 0 1 7 7c0 5-7 11-7 11s-7-6-7-11a7 7 0 0 1 7-7z" fill={colors.sunDark} transform="translate(0 1.5)" />
-      <Path d="M30 6.5a7 7 0 0 1 7 7c0 5-7 11-7 11s-7-6-7-11a7 7 0 0 1 7-7z" fill={colors.sun} />
-      <Circle cx={30} cy={13.5} r={2.6} fill="#fff" />
     </Svg>
   );
 }

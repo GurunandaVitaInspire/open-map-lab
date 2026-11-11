@@ -1,10 +1,10 @@
 import { router, useFocusEffect } from 'expo-router';
 import { memo, useCallback, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { G, Path } from 'react-native-svg';
 import { OceanBackdrop, PageBackdrop } from '../components/Backdrops';
-import { LogoMark, StarIcon } from '../components/icons';
+import { StarIcon } from '../components/icons';
 import { Button, Card, Chip, Label, Pill } from '../components/ui';
 import { MAP_LIST, MAPS, type MapDefinition } from '../data/maps';
 import type { DiagramMode } from '../lib/game';
@@ -49,10 +49,18 @@ export default function Home() {
         <View style={[styles.container, { maxWidth: board ? s(1080) : 560 }]}>
           {/* header */}
           <View style={[styles.header, { marginTop: s(board ? 18 : 6), marginBottom: s(24), gap: s(14) }]}>
-            <LogoMark size={s(board ? 64 : 52)} />
+            <View style={[styles.logoTile, { width: s(board ? 76 : 62), height: s(board ? 76 : 62), borderRadius: s(20) }]}>
+              <Image
+                source={require('../../assets/brand/vitainspire-mark.png')}
+                style={{ width: '82%', height: '82%' }}
+                resizeMode="contain"
+                accessibilityLabel="VitaInspire logo"
+              />
+            </View>
             <View style={{ flex: 1 }}>
               <Text style={[styles.title, { fontSize: s(board ? 46 : 34), lineHeight: s(board ? 52 : 40) }]}>Open Map Lab</Text>
               <Text style={[styles.motto, { fontSize: s(board ? 17 : 14) }]}>Drag, drop & discover — geography you can touch.</Text>
+              <Text style={[styles.byline, { fontSize: s(12) }]}>by VitaInspire · Empowering Through AI</Text>
             </View>
           </View>
 
@@ -212,6 +220,16 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'flex-start' },
   title: { fontFamily: fonts.display, color: colors.ink, letterSpacing: -0.5 },
   motto: { fontFamily: fonts.body, color: colors.inkSoft },
+  byline: { fontFamily: fonts.bodyBold, color: '#1F5C8F', marginTop: 2, letterSpacing: 0.3 },
+  logoTile: {
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.line,
+    borderBottomWidth: 6,
+    borderBottomColor: colors.surfaceLip,
+  },
   help: { fontFamily: fonts.body, color: colors.inkSoft, lineHeight: 19 },
   chips: { flexDirection: 'row', flexWrap: 'wrap' },
   tile: {
