@@ -38,7 +38,11 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "build:maps": "node scripts/build-maps.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:web": "expo export -p web"
   },
-  "private": true
+  "private": true,
+  "engines": {
+    "node": ">=22.13"
+  }
 }

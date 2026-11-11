@@ -34,6 +34,10 @@ npm run android    # Android (Expo Go or emulator)
 npm run ios        # iOS (macOS required, or Expo Go)
 ```
 
+## Deploy the web app (Vercel)
+
+`vercel.json` is already set up: Vercel runs `expo export -p web`, serves the `dist` folder, and sends every path to the single-page app so links like `/play/india` work. In the Vercel project settings, leave **Framework Preset** as *Other* and use Node.js 22 or newer.
+
 ## Project layout
 
 ```
