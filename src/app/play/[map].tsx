@@ -1,16 +1,17 @@
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
-import { Animated, Easing, PanResponder, Platform, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { ActivityIndicator, Animated, Easing, PanResponder, Platform, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { OceanBackdrop } from '../../components/Backdrops';
 import { Celebration, type CelebrationKind } from '../../components/Celebration';
 import { FocusIcon, GameTopBar, LegendLine, Pulse, RoundResults, StarsRow, StatPill } from '../../components/GameUI';
 import { CompassRose, FlameIcon } from '../../components/icons';
+import { Looping } from '../../components/Looping';
 import { MapCanvas, type Attempt } from '../../components/MapCanvas';
 import { RegionShape, fitScale } from '../../components/RegionShape';
 import { Button, Card, Label, Pill } from '../../components/ui';
-import { getMap, getView, type MapDefinition, type Region } from '../../data/maps';
+import { getView, useMap, type MapDefinition, type Region } from '../../data/maps';
 import { buildQuestions, cheer, measurePlacement, placementTip, pointsFor, type DiagramMode, type Placement } from '../../lib/game';
 import { saveBest } from '../../lib/progress';
 import { playSfx } from '../../lib/sound';
@@ -35,9 +36,27 @@ function buzz(kind: 'perfect' | 'great') {
   else Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 }
 
+/** Loads the map (the world map is a separate download) and then starts the game. */
 export default function Play() {
+  const params = useLocalSearchParams<{ map: string }>();
+  const map = useMap(params.map);
+  if (!map) return <MapLoading />;
+  return <PlayGame map={map} />;
+}
+
+function MapLoading() {
+  return (
+    <SafeAreaView style={styles.safe}>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14 }}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={{ fontFamily: fonts.bodyBold, color: colors.inkSoft, fontSize: 15 }}>Unrolling the map…</Text>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+function PlayGame({ map }: { map: MapDefinition }) {
   const params = useLocalSearchParams<{ map: string; mode?: string; group?: string; count?: string }>();
-  const map = getMap(params.map);
   const mode: DiagramMode = params.mode === 'inline' && map.supportsInline ? 'inline' : 'outline';
   const group = params.group || undefined;
   const count = Number(params.count ?? 10) || 0;
@@ -140,24 +159,6 @@ export default function Play() {
     const { svg, root } = origin.current;
     return { x: svg.x - root.x + (mx - view.x) * scale, y: svg.y - root.y + (my - view.y) * scale };
   };
-
-  // ---- the tray piece gently bobs to invite a drag ---------------------------
-  const bob = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    if (dragging || reviewing || finished) {
-      bob.stopAnimation();
-      bob.setValue(0);
-      return;
-    }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(bob, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.sin), useNativeDriver: NATIVE }),
-        Animated.timing(bob, { toValue: 0, duration: 900, easing: Easing.inOut(Easing.sin), useNativeDriver: NATIVE }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [dragging, reviewing, finished, index, bob]);
 
   // ---- drag & drop ----------------------------------------------------------
   const live = useRef({ locked: false });
@@ -320,15 +321,19 @@ export default function Play() {
           ]}
           accessibilityLabel={`Shape of ${current.name}. Drag it onto the map.`}
         >
-          <Animated.View
+          {/* the piece gently bobs to invite a drag (GPU loop) */}
+          <Looping
+            on={!dragging && !reviewing}
             pointerEvents="none"
-            style={{
-              opacity: dragging || reviewing ? 0.2 : 1,
-              transform: [{ translateY: bob.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }) }],
-            }}
+            style={{ opacity: dragging || reviewing ? 0.2 : 1 }}
+            from={{ transform: [{ translateY: 0 }] }}
+            to={{ transform: [{ translateY: -6 }] }}
+            duration={900}
+            smooth
+            alternate
           >
             <RegionShape region={current} scale={pieceScale} inline={mode === 'inline'} strokePx={board ? 2.5 : 2} depthPx={board ? 7 : 5} />
-          </Animated.View>
+          </Looping>
         </View>
       </View>
 

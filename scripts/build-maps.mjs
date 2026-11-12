@@ -166,9 +166,8 @@ function write(name, data) {
   // Natural Earth 1:10m admin-0, India point-of-view edition (public domain).
   const ne = JSON.parse(readFileSync(src('ne_10m_admin_0_countries_ind.geojson'), 'utf8'));
   ne.features = ne.features.filter((f) => f.properties.ADM0_A3 !== 'ATA');
-  let topo = topology({ countries: ne }, 1e5);
-  topo = presimplify(topo);
-  topo = simplify(topo, quantile(topo, 0.03));
+  const pre = presimplify(topology({ countries: ne }, 1e5));
+  let topo = simplify(pre, quantile(pre, 0.03));
   topo = filter(topo, filterWeight(topo, 0.0003));
 
   const countries = fixWinding(feature(topo, topo.objects.countries));
@@ -191,6 +190,19 @@ function write(name, data) {
     .filter((r) => r.d && r.mask.count > 0);
 
   for (const r of regions) r.playable = r.area >= 25 && r.group !== 'Seven seas (open ocean)';
+
+  // A tiny, very simplified copy just for thumbnails (the landing-page card), so the full world
+  // map only has to load when someone actually opens World Explorer.
+  let lite = simplify(pre, quantile(pre, 0.006));
+  lite = filter(lite, filterWeight(lite, 0.02));
+  const litePath = geoPath(projection).digits(0);
+  const liteRegions = fixWinding(feature(lite, lite.objects.countries))
+    .features.map((f) => ({
+      id: (f.properties.ADM0_A3_IN && f.properties.ADM0_A3_IN !== '-99' ? f.properties.ADM0_A3_IN : f.properties.ADM0_A3).toLowerCase(),
+      d: litePath(f),
+    }))
+    .filter((r) => r.d);
+  write('world-lite', { id: 'world-lite', width: WIDTH, height, border: null, regions: liteRegions });
 
   write('world', {
     id: 'world',

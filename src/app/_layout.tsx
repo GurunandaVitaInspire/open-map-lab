@@ -1,28 +1,22 @@
-import { Baloo2_700Bold, Baloo2_800ExtraBold } from '@expo-google-fonts/baloo-2';
-import { Nunito_600SemiBold, Nunito_800ExtraBold, Nunito_900Black } from '@expo-google-fonts/nunito';
 import { FontDisplay, useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
+import { FONT_FILES } from '../fontFiles';
 import { initSound } from '../lib/sound';
 import { colors } from '../theme';
 
 // On the web, show text in a system font straight away and swap in the custom fonts once they
-// arrive (~1.6 MB), so slow school networks never see a blank screen.
+// arrive, so slow school networks never see a blank screen.
 const swap = (uri: number) => ({ uri, display: FontDisplay.SWAP });
+const FONT_MAP = Object.fromEntries(Object.entries(FONT_FILES).map(([name, file]) => [name, swap(file)]));
 
 export default function RootLayout() {
   useEffect(() => {
     initSound();
   }, []);
-  const [loaded, error] = useFonts({
-    Baloo2_700Bold: swap(Baloo2_700Bold),
-    Baloo2_800ExtraBold: swap(Baloo2_800ExtraBold),
-    Nunito_600SemiBold: swap(Nunito_600SemiBold),
-    Nunito_800ExtraBold: swap(Nunito_800ExtraBold),
-    Nunito_900Black: swap(Nunito_900Black),
-  });
+  const [loaded, error] = useFonts(FONT_MAP);
   // Native apps bundle the fonts, so waiting a moment there avoids a visible font jump.
   if (Platform.OS !== 'web' && !loaded && !error) return null;
 

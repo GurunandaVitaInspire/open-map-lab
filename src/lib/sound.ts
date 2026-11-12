@@ -75,12 +75,16 @@ export async function initSound() {
     const raw = await AsyncStorage.getItem(KEY);
     if (raw) settings = { ...settings, ...JSON.parse(raw) };
   } catch {}
-  (Object.keys(SFX) as Sfx[]).forEach((n) => {
-    try {
-      player(n);
-    } catch {}
-  });
   emit();
+  // Preload the (small) effects a moment after start-up, so they never compete with the first
+  // paint for bandwidth. playSfx() also creates players on demand if someone is faster.
+  setTimeout(() => {
+    (Object.keys(SFX) as Sfx[]).forEach((n) => {
+      try {
+        player(n);
+      } catch {}
+    });
+  }, 2500);
 }
 
 export function playSfx(name: Sfx) {

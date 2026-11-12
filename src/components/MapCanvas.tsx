@@ -27,7 +27,9 @@ type Props = {
 /**
  * The base map, drawn as a chunky 3D slab: a soft drop shadow, an extruded sandy side, then the top
  * face. Answered regions rise out of the slab in their score colour.
- * Memoised so dragging a piece never re-renders hundreds of paths.
+ *
+ * Performance: the slab (3 layers × every region) is a separate memoised layer that only redraws
+ * when the map, view or size changes. Answering a question only redraws the small "answered" layer.
  */
 function MapCanvasImpl({ data, view, scale, scores, showBorders, showInner, focusGroup, attempt, fills }: Props) {
   const px = (n: number) => n / scale; // screen px → map units
@@ -35,58 +37,10 @@ function MapCanvasImpl({ data, view, scale, scores, showBorders, showInner, focu
   const rise = depth * 0.7; // how far answered regions pop up
   const target = attempt ? data.regions.find((r) => r.id === attempt.id) : undefined;
 
-  const faded = (r: Region) => !!focusGroup && r.group !== focusGroup;
-  const answered = data.regions.filter((r) => scores[r.id] !== undefined);
-  const unanswered = data.regions.filter((r) => scores[r.id] === undefined);
-
   return (
     <Svg width={view.w * scale} height={view.h * scale} viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}>
-      {/* drop shadow on the sea */}
-      <G transform={`translate(${depth * 0.6} ${depth * 2.2})`} opacity={0.16}>
-        {data.regions.map((r) => (
-          <Path key={r.id} d={r.d} fill={colors.shadow} stroke={colors.shadow} strokeWidth={px(3)} strokeLinejoin="round" />
-        ))}
-      </G>
-      {/* extruded side of the slab */}
-      <G transform={`translate(0 ${depth})`}>
-        {data.regions.map((r) => {
-          const c = faded(r) ? colors.landFadedSide : colors.landSide;
-          return <Path key={r.id} d={r.d} fill={c} stroke={c} strokeWidth={px(1)} strokeLinejoin="round" />;
-        })}
-      </G>
-
-      {/* top face of unanswered land. In Outline mode the stroke matches the fill, hiding internal borders */}
-      <G>
-        {unanswered.map((r) => {
-          const fill = faded(r) ? colors.landFadedTop : colors.landTop;
-          return (
-            <Path
-              key={r.id}
-              d={r.d}
-              fill={fill}
-              stroke={showBorders ? colors.landStroke : fill}
-              strokeWidth={px(showBorders ? 1 : 1.6)}
-              strokeLinejoin="round"
-            />
-          );
-        })}
-      </G>
-
-      {data.border && <Path d={data.border} fill="none" stroke={colors.border} strokeWidth={px(1.3)} strokeLinejoin="round" />}
-
-      {/* answered regions pop out of the slab */}
-      {answered.map((r) => {
-        const rt = fills?.[r.id] ?? rate(scores[r.id]);
-        return (
-          <G key={r.id}>
-            <Path d={r.d} fill={rt.side} stroke={rt.side} strokeWidth={px(1)} strokeLinejoin="round" />
-            <G transform={`translate(0 ${-rise})`}>
-              <Path d={r.d} fill={rt.fill} stroke="#fff" strokeWidth={px(1.2)} strokeLinejoin="round" />
-              {showInner && r.inner ? <Path d={r.inner} fill="none" stroke="rgba(34,24,74,0.25)" strokeWidth={px(0.6)} /> : null}
-            </G>
-          </G>
-        );
-      })}
+      <Slab data={data} scale={scale} depth={depth} showBorders={showBorders} focusGroup={focusGroup} />
+      <Answered data={data} scale={scale} rise={rise} scores={scores} fills={fills} showInner={showInner} />
 
       {target && attempt && (
         <G>
@@ -127,5 +81,78 @@ function MapCanvasImpl({ data, view, scale, scores, showBorders, showInner, focu
     </Svg>
   );
 }
+
+type SlabProps = { data: MapData; scale: number; depth: number; showBorders: boolean; focusGroup?: string };
+
+/** Shadow, extruded side and top face of every region — static for the whole round. */
+const Slab = memo(function Slab({ data, scale, depth, showBorders, focusGroup }: SlabProps) {
+  const px = (n: number) => n / scale;
+  const faded = (r: Region) => !!focusGroup && r.group !== focusGroup;
+  return (
+    <G>
+      {/* drop shadow on the sea */}
+      <G transform={`translate(${depth * 0.6} ${depth * 2.2})`} opacity={0.16}>
+        {data.regions.map((r) => (
+          <Path key={r.id} d={r.d} fill={colors.shadow} stroke={colors.shadow} strokeWidth={px(3)} strokeLinejoin="round" />
+        ))}
+      </G>
+      {/* extruded side of the slab */}
+      <G transform={`translate(0 ${depth})`}>
+        {data.regions.map((r) => {
+          const c = faded(r) ? colors.landFadedSide : colors.landSide;
+          return <Path key={r.id} d={r.d} fill={c} stroke={c} strokeWidth={px(1)} strokeLinejoin="round" />;
+        })}
+      </G>
+      {/* top face. In Outline mode the stroke matches the fill, hiding internal borders */}
+      <G>
+        {data.regions.map((r) => {
+          const fill = faded(r) ? colors.landFadedTop : colors.landTop;
+          return (
+            <Path
+              key={r.id}
+              d={r.d}
+              fill={fill}
+              stroke={showBorders ? colors.landStroke : fill}
+              strokeWidth={px(showBorders ? 1 : 1.6)}
+              strokeLinejoin="round"
+            />
+          );
+        })}
+      </G>
+      {data.border && <Path d={data.border} fill="none" stroke={colors.border} strokeWidth={px(1.3)} strokeLinejoin="round" />}
+    </G>
+  );
+});
+
+type AnsweredProps = {
+  data: MapData;
+  scale: number;
+  rise: number;
+  scores: Record<string, number>;
+  fills?: Record<string, { fill: string; side: string }>;
+  showInner: boolean;
+};
+
+/** Answered regions popping out of the slab in their score colour. */
+const Answered = memo(function Answered({ data, scale, rise, scores, fills, showInner }: AnsweredProps) {
+  const px = (n: number) => n / scale;
+  const answered = data.regions.filter((r) => scores[r.id] !== undefined);
+  return (
+    <G>
+      {answered.map((r) => {
+        const rt = fills?.[r.id] ?? rate(scores[r.id]);
+        return (
+          <G key={r.id}>
+            <Path d={r.d} fill={rt.side} stroke={rt.side} strokeWidth={px(1)} strokeLinejoin="round" />
+            <G transform={`translate(0 ${-rise})`}>
+              <Path d={r.d} fill={rt.fill} stroke="#fff" strokeWidth={px(1.2)} strokeLinejoin="round" />
+              {showInner && r.inner ? <Path d={r.inner} fill="none" stroke="rgba(34,24,74,0.25)" strokeWidth={px(0.6)} /> : null}
+            </G>
+          </G>
+        );
+      })}
+    </G>
+  );
+});
 
 export const MapCanvas = memo(MapCanvasImpl);

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
 import Svg, { G, Path } from 'react-native-svg';
+import { IS_WEB, cssAnimation } from '../lib/cssAnim';
 import { colors, fonts } from '../theme';
 import { StarIcon } from './icons';
 
@@ -33,35 +34,46 @@ type Particle = {
 
 const STEPS = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1];
 
-function burst(n: number, speed: [number, number], gravity: number, sizeRange: [number, number], shapes: Particle['shape'][]): Particle[] {
+/** Small seeded random so each celebration kind always uses the same particle set (cacheable). */
+function seeded(seed: number) {
+  let x = seed;
+  return () => {
+    x = (x * 1664525 + 1013904223) >>> 0;
+    return x / 2 ** 32;
+  };
+}
+
+function burst(n: number, speed: [number, number], gravity: number, sizeRange: [number, number], shapes: Particle['shape'][], seed: number): Particle[] {
+  const random = seeded(seed);
   return Array.from({ length: n }, (_, i) => {
-    const angle = (i / n) * Math.PI * 2 + Math.random() * 0.5;
-    const v = speed[0] + Math.random() * (speed[1] - speed[0]);
+    const angle = (i / n) * Math.PI * 2 + random() * 0.5;
+    const v = speed[0] + random() * (speed[1] - speed[0]);
     const vx = Math.cos(angle) * v;
     const vy = Math.sin(angle) * v - v * 0.35; // bias upwards: fireworks shoot up first
     return {
       shape: shapes[i % shapes.length],
       color: CONFETTI[i % CONFETTI.length],
-      size: sizeRange[0] + Math.random() * (sizeRange[1] - sizeRange[0]),
-      xs: STEPS.map((t) => vx * t),
-      ys: STEPS.map((t) => vy * t + 0.5 * gravity * t * t),
-      spin: (Math.random() - 0.5) * 900,
+      size: Math.round(sizeRange[0] + random() * (sizeRange[1] - sizeRange[0])),
+      xs: STEPS.map((t) => Math.round(vx * t)),
+      ys: STEPS.map((t) => Math.round(vy * t + 0.5 * gravity * t * t)),
+      spin: Math.round((random() - 0.5) * 900),
       delay: 0,
     };
   });
 }
 
 function rain(n: number, width: number, height: number): Particle[] {
+  const random = seeded(7);
   return Array.from({ length: n }, (_, i) => {
-    const sway = (Math.random() - 0.5) * 120;
+    const sway = (random() - 0.5) * 120;
     return {
       shape: (['ribbon', 'square', 'circle', 'star'] as const)[i % 4],
       color: CONFETTI[(i * 3) % CONFETTI.length],
-      size: 8 + Math.random() * 8,
-      xs: STEPS.map((t) => ((i + 0.5) / n) * width + sway * t + Math.sin(t * Math.PI * 3) * 18),
-      ys: STEPS.map((t) => -30 + t * (height + 60)),
-      spin: (Math.random() - 0.5) * 720,
-      delay: Math.random() * 500,
+      size: Math.round(8 + random() * 8),
+      xs: STEPS.map((t) => Math.round(((i + 0.5) / n) * width + sway * t + Math.sin(t * Math.PI * 3) * 18)),
+      ys: STEPS.map((t) => Math.round(-30 + t * (height + 60))),
+      spin: Math.round((random() - 0.5) * 720),
+      delay: Math.round(random() * 500),
     };
   });
 }
@@ -95,6 +107,47 @@ function ParticleView({ p, progress, origin }: { p: Particle; progress: Animated
   return <Animated.View style={[style, shape, { backgroundColor: p.color }]} />;
 }
 
+// Fixed particle sets per kind (kept small: these are the busiest frames in the app).
+const BURSTS: Record<CelebrationKind, Particle[]> = {
+  perfect: burst(30, [260, 520], 900, [9, 15], ['square', 'ribbon', 'circle', 'star'], 11),
+  great: burst(18, [160, 320], 700, [8, 12], ['square', 'ribbon', 'circle'], 23),
+  good: burst(8, [70, 130], 260, [9, 12], ['star'], 37),
+  sparkle: burst(10, [60, 140], 220, [8, 13], ['star', 'circle'], 41),
+};
+
+function shapeStyle(p: Particle) {
+  return p.shape === 'circle'
+    ? { width: p.size, height: p.size, borderRadius: p.size / 2 }
+    : p.shape === 'ribbon'
+      ? { width: p.size * 0.45, height: p.size * 1.4, borderRadius: 2 }
+      : { width: p.size, height: p.size, borderRadius: 2 };
+}
+
+/**
+ * Web: each particle flies on a CSS keyframe path (GPU, no JavaScript per frame). The particle sets
+ * are fixed, so the browser reuses the same few keyframe rules for every celebration.
+ */
+function WebParticle({ p, origin, duration, delay = 0, easing }: { p: Particle; origin: { x: number; y: number }; duration: number; delay?: number; easing?: string }) {
+  const frames: Record<string, object> = {};
+  STEPS.forEach((t, i) => {
+    const scale = t < 0.08 ? 0.2 + (t / 0.08) * 0.8 : 1 - 0.2 * t;
+    frames[`${Math.round(t * 100)}%`] = {
+      transform: `translateX(${p.xs[i]}px) translateY(${p.ys[i]}px) rotate(${Math.round(p.spin * t)}deg) scale(${scale.toFixed(2)})`,
+      opacity: t <= 0.75 ? 1 : Number((1 - (t - 0.75) / 0.25).toFixed(2)),
+    };
+  });
+  const anim = cssAnimation(frames as never, { duration, delay: delay + p.delay, iterations: 1, fill: 'both', easing });
+  const base = { position: 'absolute' as const, left: origin.x - p.size / 2, top: origin.y - p.size / 2 };
+  if (p.shape === 'star') {
+    return (
+      <View style={[base, anim]}>
+        <StarIcon size={p.size * 1.6} />
+      </View>
+    );
+  }
+  return <View style={[base, shapeStyle(p), { backgroundColor: p.color }, anim]} />;
+}
+
 function Rays({ size }: { size: number }) {
   const n = 14;
   const r = size / 2;
@@ -126,19 +179,16 @@ export function Celebration({ kind, origin, width, height, caption, trigger }: P
   const wave = useRef(new Animated.Value(0)).current;
   const spin = useRef(new Animated.Value(0)).current;
 
-  const particles = useMemo(() => {
-    if (kind === 'perfect') return burst(48, [260, 520], 900, [8, 15], ['square', 'ribbon', 'circle', 'star']);
-    if (kind === 'great') return burst(26, [160, 320], 700, [7, 12], ['square', 'ribbon', 'circle']);
-    if (kind === 'sparkle') return burst(12, [60, 140], 220, [8, 13], ['star', 'circle']);
-    return burst(9, [70, 130], 260, [9, 12], ['star']);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, trigger]);
-  const rainParticles = useMemo(() => (kind === 'perfect' ? rain(34, width, height) : []), [kind, width, height, trigger]);
+  const particles = BURSTS[kind];
+  const rw = Math.round(width / 100) * 100;
+  const rh = Math.round(height / 100) * 100;
+  const rainParticles = useMemo(() => (kind === 'perfect' ? rain(18, rw, rh) : []), [kind, rw, rh]);
+  const burstMs = kind === 'perfect' ? 1700 : kind === 'great' ? 1300 : 1000;
 
   useEffect(() => {
     [main, rainP, badge, flash, wave, spin].forEach((v) => v.setValue(0));
     const anims = [
-      Animated.timing(main, { toValue: 1, duration: kind === 'perfect' ? 1700 : kind === 'great' ? 1300 : 1000, easing: Easing.linear, useNativeDriver: NATIVE }),
+      Animated.timing(main, { toValue: 1, duration: burstMs, easing: Easing.linear, useNativeDriver: NATIVE }),
       Animated.sequence([
         Animated.timing(badge, { toValue: 1, duration: 420, easing: Easing.out(Easing.back(2.2)), useNativeDriver: NATIVE }),
         Animated.delay(kind === 'perfect' ? 1100 : 700),
@@ -193,12 +243,20 @@ export function Celebration({ kind, origin, width, height, caption, trigger }: P
           />
         ))}
 
-      {particles.map((p, i) => (
-        <ParticleView key={`b${i}`} p={p} progress={main} origin={origin} />
-      ))}
-      {rainParticles.map((p, i) => (
-        <ParticleView key={`r${i}`} p={p} progress={rainP} origin={{ x: 0, y: 0 }} />
-      ))}
+      {particles.map((p, i) =>
+        IS_WEB ? (
+          <WebParticle key={`b${i}-${trigger}`} p={p} origin={origin} duration={burstMs} />
+        ) : (
+          <ParticleView key={`b${i}`} p={p} progress={main} origin={origin} />
+        ),
+      )}
+      {rainParticles.map((p, i) =>
+        IS_WEB ? (
+          <WebParticle key={`r${i}-${trigger}`} p={p} origin={{ x: 0, y: 0 }} duration={2600} delay={250} easing="cubic-bezier(0.55, 0.085, 0.68, 0.53)" />
+        ) : (
+          <ParticleView key={`r${i}`} p={p} progress={rainP} origin={{ x: 0, y: 0 }} />
+        ),
+      )}
 
       {kind !== 'sparkle' && (
       <Animated.View

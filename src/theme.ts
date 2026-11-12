@@ -38,7 +38,6 @@ const family = (name: string) =>
 
 export const fonts = {
   display: family('Baloo2_800ExtraBold'),
-  displayBold: family('Baloo2_700Bold'),
   body: family('Nunito_600SemiBold'),
   bodyBold: family('Nunito_800ExtraBold'),
   black: family('Nunito_900Black'),

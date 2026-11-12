@@ -4,6 +4,7 @@ import { Animated, Easing, Platform, ScrollView, StyleSheet, Text, View } from '
 import Svg, { Circle } from 'react-native-svg';
 import { playSfx, toggleMusic, toggleSfx, useSoundSettings } from '../lib/sound';
 import { colors, fonts, rate, RATING_LEGEND } from '../theme';
+import { Looping } from './Looping';
 import { BackIcon, ExpandIcon, FlameIcon, MusicIcon, SpeakerIcon, StarIcon } from './icons';
 import { Button, Card, IconButton, Label, Pill } from './ui';
 
@@ -129,19 +130,11 @@ export function FocusIcon({ size }: { size: number }) {
 
 /** Gentle breathing pulse for motivating (not alarming) feedback. */
 export function Pulse({ children, active = true }: { children: ReactNode; active?: boolean }) {
-  const v = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    if (!active) return;
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(v, { toValue: 1, duration: 1100, easing: Easing.inOut(Easing.sin), useNativeDriver: NATIVE }),
-        Animated.timing(v, { toValue: 0, duration: 1100, easing: Easing.inOut(Easing.sin), useNativeDriver: NATIVE }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [active, v]);
-  return <Animated.View style={{ transform: [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }) }] }}>{children}</Animated.View>;
+  return (
+    <Looping on={active} from={{ transform: [{ scale: 1 }] }} to={{ transform: [{ scale: 1.12 }] }} duration={1100} smooth alternate>
+      {children}
+    </Looping>
+  );
 }
 
 export function LegendLine({ color, label, size, dashed }: { color: string; label: string; size: number; dashed?: boolean }) {

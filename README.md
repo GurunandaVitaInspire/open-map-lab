@@ -45,7 +45,15 @@ npm run ios        # iOS (macOS required, or Expo Go)
 
 ### Tip: keep the project out of OneDrive
 
-If the project folder is synced by OneDrive, the bundler can briefly fail to see newly installed packages or new files ("Unable to resolve …") while OneDrive is still processing them. Waiting a moment and restarting with `npx expo start --clear` fixes it; moving the project to a non-synced folder avoids it.
+While OneDrive is still syncing a newly created file, Node reports it as a symbolic link, and the bundler (Metro) skips symbolic links, so you get "Unable to resolve …" for brand-new files or freshly installed packages. It fixes itself once OneDrive finishes (restart with `npx expo start --clear`); moving the project to a non-synced folder avoids it entirely.
+
+## Performance notes
+
+- **Fonts** are subset to the Latin characters the app uses (`assets/fonts`, OFL-licensed): ~65 KB of WOFF2 on the web instead of ~1.2 MB.
+- **The world map** (~400 KB) is a separate chunk that only downloads when World Explorer is opened (`loadMap` / `useMap` in `src/data/maps.ts`); the landing card uses a 37 KB simplified copy.
+- **Ambient animation** (sea, waves, clouds, swaying cards, blinking, confetti) runs as CSS keyframes on the web via `src/components/Looping.tsx` and `src/lib/cssAnim.ts`, so it costs no JavaScript per frame and never competes with dragging. Native apps use the native animation driver.
+- **Maps** draw the 3D slab once per round; answering only redraws the small "answered" layer.
+- **Caching:** hashed JS and asset files are served with a one-year immutable cache (`vercel.json`).
 
 ## Project layout
 
@@ -54,6 +62,8 @@ src/app/              Expo Router screens (index = landing page, play/ = Place i
 src/components/       MapCanvas (base map), RegionShape (piece), GameUI (shared header/results), Celebration, ui
 src/lib/sound.ts      Sound effects and music (expo-audio)
 src/lib/motion.ts     Pause-motion / reduced-motion setting
+src/components/Looping.tsx  GPU-friendly looping animation (CSS on web, native driver on apps)
+assets/fonts/         Subset Baloo 2 and Nunito fonts (OFL)
 src/lib/jigsaw.ts     Jigsaw cutter (knobbed piece outlines)
 assets/sounds/        CC0 audio (see CREDITS.md)
 src/data/maps.ts      Map registry — add new maps here

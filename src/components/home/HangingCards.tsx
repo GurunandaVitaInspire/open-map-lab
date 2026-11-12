@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Animated, Easing, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Svg, { Path, Rect } from 'react-native-svg';
 import { useMotion } from '../../lib/motion';
 import { colors, fonts } from '../../theme';
 import { StarIcon } from '../icons';
+import { Looping } from '../Looping';
 
 const NATIVE = Platform.OS !== 'web';
 
@@ -102,57 +103,35 @@ function HangingCard({
   s: (n: number) => number;
 }) {
   const motion = useMotion();
+  // Entrance drop/swing and the tap "kick" are short one-off animations; the endless idle sway is
+  // a GPU loop (Looping), so it costs nothing while the page sits open.
   const angle = useRef(new Animated.Value(motion ? tilt + (index % 2 ? -14 : 14) : tilt)).current;
   const drop = useRef(new Animated.Value(motion ? -70 : 0)).current;
-  // always visible: only the drop and swing animate, so cards never get stuck invisible on slow devices
-  const fade = useRef(new Animated.Value(1)).current;
-  const sway = useRef<Animated.CompositeAnimation | null>(null);
-
-  const startSway = () => {
-    if (!motion) return;
-    sway.current?.stop();
-    sway.current = Animated.loop(
-      Animated.sequence([
-        Animated.timing(angle, { toValue: tilt + 2, duration: 1900 + index * 160, easing: Easing.inOut(Easing.sin), useNativeDriver: NATIVE }),
-        Animated.timing(angle, { toValue: tilt - 2, duration: 1900 + index * 160, easing: Easing.inOut(Easing.sin), useNativeDriver: NATIVE }),
-      ]),
-    );
-    sway.current.start();
-  };
 
   useEffect(() => {
     if (!motion) {
-      sway.current?.stop();
       angle.setValue(tilt);
       drop.setValue(0);
-      fade.setValue(1);
       return;
     }
-    // drop in, then a damped swing that settles into the idle sway
-    const delay = 250 + index * 110;
     const entrance = Animated.sequence([
-      Animated.delay(delay),
+      Animated.delay(250 + index * 110),
       Animated.parallel([
-        Animated.timing(fade, { toValue: 1, duration: 250, useNativeDriver: NATIVE }),
         Animated.spring(drop, { toValue: 0, friction: 6, tension: 70, useNativeDriver: NATIVE }),
         Animated.spring(angle, { toValue: tilt, friction: 2.2, tension: 26, useNativeDriver: NATIVE }),
       ]),
     ]);
-    entrance.start(({ finished }) => finished && startSway());
-    return () => {
-      entrance.stop();
-      sway.current?.stop();
-    };
+    entrance.start();
+    return () => entrance.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [motion, tilt]);
 
   const kick = () => {
     if (motion) {
-      sway.current?.stop();
       Animated.sequence([
         Animated.timing(angle, { toValue: tilt + (index % 2 ? -9 : 9), duration: 110, useNativeDriver: NATIVE }),
         Animated.spring(angle, { toValue: tilt, friction: 2.6, tension: 40, useNativeDriver: NATIVE }),
-      ]).start(() => startSway());
+      ]).start();
     }
     onPress();
   };
@@ -166,7 +145,6 @@ function HangingCard({
         top: clipY + 12,
         width: w,
         height: h,
-        opacity: fade,
         transform: [
           { translateY: drop },
           { translateY: -pivot },
@@ -175,6 +153,16 @@ function HangingCard({
         ],
       }}
     >
+      <Looping
+        on={motion}
+        style={StyleSheet.absoluteFill}
+        from={{ transform: [{ translateY: -pivot }, { rotate: '-2deg' }, { translateY: pivot }] }}
+        to={{ transform: [{ translateY: -pivot }, { rotate: '2deg' }, { translateY: pivot }] }}
+        duration={1900 + index * 160}
+        phase={(index * 0.37) % 1}
+        smooth
+        alternate
+      >
       {/* clothes-peg clip */}
       <View style={[styles.clipWrap, { left: w / 2 - 9, top: -24 }]} pointerEvents="none">
         <Svg width={18} height={34} viewBox="0 0 18 34">
@@ -209,6 +197,7 @@ function HangingCard({
           </View>
         </View>
       </Pressable>
+      </Looping>
     </Animated.View>
   );
 }

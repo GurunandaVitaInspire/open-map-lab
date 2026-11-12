@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Animated, Easing, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { colors, fonts } from '../../theme';
@@ -32,14 +32,18 @@ type Props = {
 /** Slide-up sheet (centred card on big screens) with a game's options and a big Play button. */
 export function SetupSheet({ open, onClose, title, subtitle, art, tint, groups, note, playLabel, onPlay, board, s }: Props) {
   const v = useRef(new Animated.Value(0)).current;
+  // only mounted while open (or animating closed), so a closed sheet costs nothing
+  const [mounted, setMounted] = useState(open);
   useEffect(() => {
+    if (open) setMounted(true);
     Animated.timing(v, {
       toValue: open ? 1 : 0,
       duration: open ? 300 : 200,
       easing: open ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
       useNativeDriver: NATIVE,
-    }).start();
+    }).start(({ finished }) => finished && !open && setMounted(false));
   }, [open, v]);
+  if (!mounted) return null;
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents={open ? 'auto' : 'none'}>

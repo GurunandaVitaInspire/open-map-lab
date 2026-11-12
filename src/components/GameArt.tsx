@@ -1,11 +1,12 @@
-import { memo, useEffect, useMemo, useRef } from 'react';
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { memo, useMemo } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import Svg, { G, Path, Rect } from 'react-native-svg';
-import { MAPS } from '../data/maps';
+import { INDIA } from '../data/maps';
+import worldLite from '../data/generated/world-lite.json';
 import { makeJigsaw } from '../lib/jigsaw';
 import { useMotion } from '../lib/motion';
 import { colors, fonts } from '../theme';
-import { NATIVE } from './GameUI';
+import { Looping } from './Looping';
 import { buildPicture } from './PuzzlePicture';
 
 export type ArtKind = 'place' | 'quiz' | 'puzzle' | 'world';
@@ -18,24 +19,9 @@ export const GameArt = memo(function GameArt({ kind }: { kind: ArtKind }) {
 });
 
 function IndiaArt({ kind }: { kind: 'place' | 'quiz' }) {
-  const { data } = MAPS.india;
+  const { data } = INDIA;
   const motion = useMotion();
   const hero = data.regions.find((r) => r.id === (kind === 'quiz' ? 'andhra-pradesh' : 'maharashtra'))!;
-  const blink = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    if (kind !== 'quiz' || !motion) {
-      blink.setValue(1);
-      return;
-    }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(blink, { toValue: 0.25, duration: 600, easing: Easing.inOut(Easing.quad), useNativeDriver: NATIVE }),
-        Animated.timing(blink, { toValue: 1, duration: 600, easing: Easing.inOut(Easing.quad), useNativeDriver: NATIVE }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [kind, motion, blink]);
   const vb = `-40 -60 ${data.width + 80} ${data.height + 110}`;
   return (
     <View style={{ flex: 1 }}>
@@ -58,11 +44,11 @@ function IndiaArt({ kind }: { kind: 'place' | 'quiz' }) {
       </Svg>
       {kind === 'quiz' && (
         <>
-          <Animated.View style={[StyleSheet.absoluteFill, { opacity: blink }]} pointerEvents="none">
+          <Looping on={motion} style={StyleSheet.absoluteFill} pointerEvents="none" from={{ opacity: 1 }} to={{ opacity: 0.25 }} duration={600} smooth alternate>
             <Svg width="100%" height="100%" viewBox={vb}>
               <Path d={hero.d} fill={colors.mint} stroke="#fff" strokeWidth={6} />
             </Svg>
-          </Animated.View>
+          </Looping>
           <View style={styles.bubble} pointerEvents="none">
             <Text style={styles.bubbleText}>?</Text>
           </View>
@@ -73,7 +59,7 @@ function IndiaArt({ kind }: { kind: 'place' | 'quiz' }) {
 }
 
 function JigsawArt() {
-  const { data } = MAPS.india;
+  const { data } = INDIA;
   const pic = useMemo(() => buildPicture(data), [data]);
   const jig = useMemo(() => makeJigsaw(data.width, data.height, 4, 3, 7), [data]);
   const lifted = jig.pieces[4]; // middle-left piece pops out
@@ -100,7 +86,8 @@ function JigsawArt() {
 }
 
 function WorldArt() {
-  const { data } = MAPS.world;
+  // tiny simplified world (37 KB) so the landing page never loads the full world map
+  const data = worldLite as { width: number; height: number; regions: { id: string; d: string }[] };
   const hero = data.regions.find((r) => r.id === 'bra') ?? data.regions[0];
   const depth = data.width / 70;
   return (

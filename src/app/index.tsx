@@ -3,14 +3,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Image, Linking, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
-import { Clouds, WaveBand, useLoop } from '../components/Backdrops';
+import { Clouds, WaveBand } from '../components/Backdrops';
 import { GameArt, type ArtKind } from '../components/GameArt';
 import { SoundButtons } from '../components/GameUI';
 import { HangingCards, type HangingItem } from '../components/home/HangingCards';
+import { Looping } from '../components/Looping';
 import { SetupSheet, type ChoiceGroup } from '../components/home/SetupSheet';
 import { MotionIcon, StarIcon } from '../components/icons';
 import { Button, IconButton } from '../components/ui';
-import { MAPS } from '../data/maps';
+import { MAP_META, prefetchMap } from '../data/maps';
 import type { DiagramMode } from '../lib/game';
 import { toggleMotion, useMotion, useMotionPreference } from '../lib/motion';
 import { getBestAny } from '../lib/progress';
@@ -77,6 +78,7 @@ export default function Home() {
 
   const openQuest = (key: string) => {
     playSfx('tap');
+    if (key === 'world') prefetchMap('world'); // download while the setup sheet is open
     setGroup('');
     setOpen(key as QuestKey);
   };
@@ -106,7 +108,7 @@ export default function Home() {
         ? mode === 'outline'
           ? 'Only India’s border and the blinking state are shown.'
           : 'All state borders are shown — easier for beginners.'
-        : MAPS[quest.map].modeHelp[mode],
+        : MAP_META[quest.map].modeHelp[mode],
   };
   const countGroup: ChoiceGroup = {
     label: 'Questions',
@@ -147,7 +149,7 @@ export default function Home() {
             styleGroup,
             {
               label: 'Region',
-              options: [{ label: 'Whole world', value: '' }, ...(MAPS.world.groups ?? []).map((g) => ({ label: g, value: g }))],
+              options: [{ label: 'Whole world', value: '' }, ...(MAP_META.world.groups ?? []).map((g) => ({ label: g, value: g }))],
               value: group,
               onChange: tapSet(setGroup),
             },
@@ -228,7 +230,7 @@ function NavBar({ s, board }: { s: (n: number) => number; board: boolean }) {
   return (
     <View style={[styles.nav, { paddingHorizontal: s(20), paddingTop: s(14), gap: s(10) }]}>
       <View style={[styles.logo, { width: s(46), height: s(46), borderRadius: s(14) }]}>
-        <Image source={require('../../assets/brand/vitainspire-mark.png')} style={{ width: '84%', height: '84%' }} resizeMode="contain" accessibilityLabel="VitaInspire logo" />
+        <Image source={require('../../assets/brand/vitainspire-mark-160.png')} style={{ width: '84%', height: '84%' }} resizeMode="contain" accessibilityLabel="VitaInspire logo" />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={[styles.brand, { fontSize: s(board ? 22 : 19) }]}>Open Map Lab</Text>
@@ -344,13 +346,12 @@ function Headline({ s, board, width }: { s: (n: number) => number; board: boolea
   );
 }
 
-/** Endless ticker of features, sliding left (static when motion is paused). */
+/** Endless ticker of features, sliding left (static when motion is paused). GPU-driven on web. */
 function Ticker({ s }: { s: (n: number) => number }) {
   const motion = useMotion();
   const [w, setW] = useState(0);
-  const t = useLoop(30000, motion && w > 0);
   const row = (key: string) => (
-    <View key={key} style={{ flexDirection: 'row', gap: s(12), paddingRight: s(12) }} onLayout={key === 'a' ? (e) => setW(e.nativeEvent.layout.width) : undefined}>
+    <View key={key} style={{ flexDirection: 'row', gap: s(12), paddingRight: s(12) }} onLayout={key === 'a' ? (e) => setW(Math.round(e.nativeEvent.layout.width)) : undefined}>
       {FEATURES.map((f) => (
         <View key={f} style={[styles.tick, { paddingHorizontal: s(14), paddingVertical: s(7) }]}>
           <StarIcon size={s(14)} color="#FFFFFF" edge="#CDE9F8" />
@@ -361,13 +362,16 @@ function Ticker({ s }: { s: (n: number) => number }) {
   );
   return (
     <View style={{ overflow: 'hidden' }} accessibilityLabel={FEATURES.join(', ')}>
-      <Animated.View
-        style={{ flexDirection: 'row', transform: [{ translateX: w ? t.interpolate({ inputRange: [0, 1], outputRange: [0, -w] }) : 0 }] }}
-        importantForAccessibility="no-hide-descendants"
+      <Looping
+        on={motion && w > 0}
+        style={{ flexDirection: 'row' }}
+        from={{ transform: [{ translateX: 0 }] }}
+        to={{ transform: [{ translateX: -w }] }}
+        duration={30000}
       >
         {row('a')}
         {row('b')}
-      </Animated.View>
+      </Looping>
     </View>
   );
 }

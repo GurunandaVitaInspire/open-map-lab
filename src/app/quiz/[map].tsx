@@ -11,7 +11,7 @@ import { MapCanvas } from '../../components/MapCanvas';
 import { RegionHighlight } from '../../components/RegionHighlight';
 import { useMapFrame } from '../../components/useMapFrame';
 import { Button, Card, Label } from '../../components/ui';
-import { MAPS, getView, type Region } from '../../data/maps';
+import { INDIA, getView, type Region } from '../../data/maps';
 import { buildQuestions, quizOptions, quizScore, regionWhere, shuffle, type DiagramMode } from '../../lib/game';
 import { saveBest } from '../../lib/progress';
 import { playSfx } from '../../lib/sound';
@@ -25,7 +25,7 @@ const EUREKA = ['Eureka!', 'Spot on!', 'Brilliant!', 'You got it!', 'Map master!
 
 export default function Quiz() {
   // This game is India only.
-  const map = MAPS.india;
+  const map = INDIA;
   const params = useLocalSearchParams<{ mode?: string; count?: string }>();
   const mode: DiagramMode = params.mode === 'inline' ? 'inline' : 'outline';
   const count = Number(params.count ?? 10) || 0;
@@ -284,7 +284,7 @@ function OptionButton({ label, state, onPress, s, board }: { label: string; stat
 
 function QuizResult({ result, s, board, streak }: { result: Result; s: (n: number) => number; board: boolean; streak: number }) {
   const r = rate(result.score);
-  const map = MAPS.india;
+  const map = INDIA;
   const neighbours = (result.region.neighbors ?? []).map((id) => map.data.regions.find((x) => x.id === id)?.name).filter(Boolean);
   const line =
     result.tries === 1 ? 'First try — perfect!' : result.tries === 2 ? 'Second try — well done!' : 'You found it — keep practising!';

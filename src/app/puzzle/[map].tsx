@@ -6,9 +6,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { ClipPath, Defs, G, Path, Pattern, Rect } from 'react-native-svg';
 import { Celebration, type CelebrationKind } from '../../components/Celebration';
 import { GameTopBar, NATIVE, RoundResults, StatPill, gameStyles } from '../../components/GameUI';
+import { Looping } from '../../components/Looping';
 import { PictureContent, buildPicture, type Picture } from '../../components/PuzzlePicture';
 import { Button } from '../../components/ui';
-import { MAPS } from '../../data/maps';
+import { INDIA } from '../../data/maps';
 import { puzzleScore, shuffle } from '../../lib/game';
 import { PUZZLE_SIZES, makeJigsaw, type Jigsaw, type Piece } from '../../lib/jigsaw';
 import { saveBest } from '../../lib/progress';
@@ -34,7 +35,7 @@ type Handlers = {
 
 export default function PuzzleGame() {
   // India only.
-  const map = MAPS.india;
+  const map = INDIA;
   const params = useLocalSearchParams<{ mode?: string; count?: string }>();
   const ghost = params.mode !== 'outline'; // faint picture guide on the board (default on)
   const count = PUZZLE_SIZES[Number(params.count)] ? Number(params.count) : 12;
@@ -173,10 +174,12 @@ export default function PuzzleGame() {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     setSelected(null);
     setHintId(null);
+    // a quick, decisive snap (a spring here takes ~0.6 s to settle and feels laggy)
+    const snap = { duration: 170, easing: Easing.out(Easing.cubic), useNativeDriver: false };
     Animated.parallel([
-      Animated.spring(a.pos, { toValue: t, useNativeDriver: false, friction: 7, tension: 120 }),
-      Animated.spring(a.rot, { toValue: 0, useNativeDriver: false }),
-      Animated.spring(a.sc, { toValue: 1, useNativeDriver: false }),
+      Animated.timing(a.pos, { toValue: t, ...snap }),
+      Animated.timing(a.rot, { toValue: 0, ...snap }),
+      Animated.timing(a.sc, { toValue: 1, ...snap }),
     ]).start(() => {
       setPlaced((pl) => ({ ...pl, [id]: misses[id] ?? 0 }));
       setSlotPieces((sp) => sp.map((x) => (x === id ? null : x)));
@@ -609,25 +612,14 @@ function LoosePiece({
   );
 }
 
-/** Blinking outline on the board showing where a piece belongs. */
+/** Blinking outline on the board showing where a piece belongs (GPU loop). */
 function HintGlow({ piece, pic, scale }: { piece: Piece; pic: Picture; scale: number }) {
-  const v = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(v, { toValue: 0.25, duration: 450, easing: Easing.inOut(Easing.quad), useNativeDriver: NATIVE }),
-        Animated.timing(v, { toValue: 1, duration: 450, easing: Easing.inOut(Easing.quad), useNativeDriver: NATIVE }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [v]);
   return (
-    <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: v }]}>
+    <Looping pointerEvents="none" style={StyleSheet.absoluteFill} from={{ opacity: 1 }} to={{ opacity: 0.25 }} duration={450} smooth alternate>
       <Svg width={pic.width * scale} height={pic.height * scale} viewBox={`0 0 ${pic.width} ${pic.height}`}>
         <Path d={piece.path} fill="rgba(255,200,61,0.45)" stroke={colors.sun} strokeWidth={4 / scale} strokeLinejoin="round" />
       </Svg>
-    </Animated.View>
+    </Looping>
   );
 }
 

@@ -1,5 +1,5 @@
+import { useEffect, useState } from 'react';
 import indiaData from './generated/india.json';
-import worldData from './generated/world.json';
 
 export type Region = {
   id: string;
@@ -47,7 +47,11 @@ export type MapDefinition = {
   data: MapData;
 };
 
-export const MAPS: Record<MapDefinition['id'], MapDefinition> = {
+export type MapId = MapDefinition['id'];
+export type MapMeta = Omit<MapDefinition, 'data'>;
+
+/** Everything about each map except its geometry (cheap, always loaded). */
+export const MAP_META: Record<MapId, MapMeta> = {
   india: {
     id: 'india',
     title: 'India',
@@ -58,7 +62,6 @@ export const MAPS: Record<MapDefinition['id'], MapDefinition> = {
       outline: "The map shows only India's outer border — you work out where each state sits.",
       inline: 'The map shows state borders, and each shape includes its district boundaries.',
     },
-    data: indiaData as MapData,
   },
   world: {
     id: 'world',
@@ -71,11 +74,50 @@ export const MAPS: Record<MapDefinition['id'], MapDefinition> = {
       inline: 'The map shows every country border.',
     },
     groups: ['Asia', 'Africa', 'Europe', 'North America', 'South America', 'Oceania'],
-    data: worldData as MapData,
   },
 };
 
-export const MAP_LIST = [MAPS.india, MAPS.world];
+/** India is used by every game and the landing page, so it ships with the app. */
+export const INDIA: MapDefinition = { ...MAP_META.india, data: indiaData as MapData };
+
+const loaded: Partial<Record<MapId, MapDefinition>> = { india: INDIA };
+const pending: Partial<Record<MapId, Promise<MapDefinition>>> = {};
+
+/**
+ * Loads a map's geometry. The world map (~400 KB) is a separate download that only happens when
+ * someone opens World Explorer, which keeps the first page load small.
+ */
+export function loadMap(id: MapId): Promise<MapDefinition> {
+  const ready = loaded[id];
+  if (ready) return Promise.resolve(ready);
+  pending[id] ??= import('./generated/world.json').then((m) => {
+    const data = ((m as { default?: unknown }).default ?? m) as MapData;
+    const def = { ...MAP_META[id], data };
+    loaded[id] = def;
+    return def;
+  });
+  return pending[id]!;
+}
+
+/** The map with its geometry, or null while it is still downloading. */
+export function useMap(id: string | undefined): MapDefinition | null {
+  const key: MapId = id === 'world' ? 'world' : 'india';
+  const [map, setMap] = useState<MapDefinition | null>(loaded[key] ?? null);
+  useEffect(() => {
+    let alive = true;
+    if (!loaded[key]) loadMap(key).then((m) => alive && setMap(m));
+    else setMap(loaded[key]!);
+    return () => {
+      alive = false;
+    };
+  }, [key]);
+  return map;
+}
+
+/** Start downloading a map in the background (e.g. when its card is tapped). */
+export function prefetchMap(id: MapId) {
+  loadMap(id).catch(() => {});
+}
 
 export type View = { x: number; y: number; w: number; h: number };
 
@@ -104,8 +146,4 @@ export function getView(map: MapDefinition, group?: string): View {
 
 export function inView(r: Region, v: View) {
   return r.cx >= v.x && r.cx <= v.x + v.w && r.cy >= v.y && r.cy <= v.y + v.h;
-}
-
-export function getMap(id: string | undefined): MapDefinition {
-  return (id && MAPS[id as MapDefinition['id']]) || MAPS.india;
 }
