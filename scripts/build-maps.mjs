@@ -11,7 +11,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { geoArea, geoContains, geoDistance, geoMercator, geoNaturalEarth1, geoPath } from 'd3-geo';
-import { feature, mesh } from 'topojson-client';
+import { feature, mesh, neighbors } from 'topojson-client';
 import { topology } from 'topojson-server';
 import { presimplify, simplify, quantile, filter, filterWeight } from 'topojson-simplify';
 
@@ -126,13 +126,18 @@ function write(name, data) {
   const { height, path, projection } = fitProjection(geoMercator(), states);
   const districtGeoms = topo.objects.districts.geometries;
 
-  const regions = states.features.map((f) => {
+  // which states share a border (used for tricky quiz options)
+  const stateGeoms = topo.objects.states.geometries;
+  const touching = neighbors(stateGeoms);
+
+  const regions = states.features.map((f, idx) => {
     const name = f.properties.st_nm;
     const own = districtGeoms.filter((g) => g.properties.st_nm === name);
     const inner = mesh(topo, { type: 'GeometryCollection', geometries: own }, (a, b) => a !== b);
     const rec = regionRecord(path, f, { id: slug(name), name }, projection);
     rec.inner = path(inner) ?? undefined;
     rec.districts = own.map((g) => g.properties.district).sort();
+    rec.neighbors = touching[idx].map((j) => slug(stateGeoms[j].properties.st_nm)).sort();
     return rec;
   });
 

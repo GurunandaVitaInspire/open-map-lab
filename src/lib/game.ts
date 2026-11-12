@@ -131,3 +131,43 @@ export function pointsFor(accuracy: number, streak: number) {
   const bonus = accuracy >= 80 && streak >= 2 ? Math.min(streak, 5) * 10 : 0;
   return { base: accuracy, bonus, total: accuracy + bonus };
 }
+
+// ---- "Name it" quiz ------------------------------------------------------------
+
+/** Where a region sits, e.g. "in the south-west of India" (India) or "in Asia" (world). */
+export function regionWhere(map: MapDefinition, r: Region): string {
+  if (map.id !== 'india') return r.group ? `in ${r.group}` : '';
+  const d = compass(r.cx - map.data.width / 2, r.cy - map.data.height / 2, 0.08);
+  return d ? `in the ${d} of India` : 'in central India';
+}
+
+/**
+ * Four answer options: the right one plus look-alike distractors. Neighbouring states come
+ * first (Andhra Pradesh → Telangana, Karnataka…) so students must really know the map.
+ */
+export function quizOptions(map: MapDefinition, r: Region, n = 4): Region[] {
+  const byId = new Map(map.data.regions.map((x) => [x.id, x]));
+  const pool = map.data.regions.filter((x) => x.id !== r.id && x.playable);
+  const near = shuffle((r.neighbors ?? []).map((id) => byId.get(id)).filter((x): x is Region => !!x && x.playable));
+  const picks = near.slice(0, n - 1);
+  for (const x of shuffle(pool)) {
+    if (picks.length >= n - 1) break;
+    if (!picks.includes(x)) picks.push(x);
+  }
+  return shuffle([r, ...picks]);
+}
+
+/** Score per quiz question from the number of tries: 1st 100, 2nd 80, 3rd 50, then 20. */
+export function quizScore(tries: number) {
+  return tries <= 1 ? 100 : tries === 2 ? 80 : tries === 3 ? 50 : 20;
+}
+
+// ---- puzzle --------------------------------------------------------------------
+
+/** Regions too small to grab are pre-placed on the puzzle board instead of being pieces. */
+export const PUZZLE_MIN_AREA = 300;
+
+/** Score per puzzle piece from wrong drops before it was placed. */
+export function puzzleScore(misses: number) {
+  return misses === 0 ? 100 : misses === 1 ? 80 : misses === 2 ? 50 : 20;
+}

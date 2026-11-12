@@ -20,6 +20,8 @@ type Props = {
   focusGroup?: string;
   /** the last drop: piece drawn where the student put it, next to its true position */
   attempt?: Attempt | null;
+  /** custom top/side colours for answered regions (e.g. puzzle pieces); default is the score colour */
+  fills?: Record<string, { fill: string; side: string }>;
 };
 
 /**
@@ -27,7 +29,7 @@ type Props = {
  * face. Answered regions rise out of the slab in their score colour.
  * Memoised so dragging a piece never re-renders hundreds of paths.
  */
-function MapCanvasImpl({ data, view, scale, scores, showBorders, showInner, focusGroup, attempt }: Props) {
+function MapCanvasImpl({ data, view, scale, scores, showBorders, showInner, focusGroup, attempt, fills }: Props) {
   const px = (n: number) => n / scale; // screen px → map units
   const depth = px(Math.max(3, Math.min(9, scale * 9))); // slab thickness, scaled with map size
   const rise = depth * 0.7; // how far answered regions pop up
@@ -74,7 +76,7 @@ function MapCanvasImpl({ data, view, scale, scores, showBorders, showInner, focu
 
       {/* answered regions pop out of the slab */}
       {answered.map((r) => {
-        const rt = rate(scores[r.id]);
+        const rt = fills?.[r.id] ?? rate(scores[r.id]);
         return (
           <G key={r.id}>
             <Path d={r.d} fill={rt.side} stroke={rt.side} strokeWidth={px(1)} strokeLinejoin="round" />

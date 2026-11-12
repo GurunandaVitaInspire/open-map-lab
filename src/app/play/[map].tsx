@@ -3,17 +3,18 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
 import { Animated, Easing, PanResponder, Platform, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Svg, { Circle } from 'react-native-svg';
 import { OceanBackdrop } from '../../components/Backdrops';
 import { Celebration, type CelebrationKind } from '../../components/Celebration';
-import { BackIcon, CompassRose, ExpandIcon, FlameIcon, StarIcon } from '../../components/icons';
+import { FocusIcon, GameTopBar, LegendLine, Pulse, RoundResults, StarsRow, StatPill } from '../../components/GameUI';
+import { CompassRose, FlameIcon } from '../../components/icons';
 import { MapCanvas, type Attempt } from '../../components/MapCanvas';
 import { RegionShape, fitScale } from '../../components/RegionShape';
-import { Button, Card, IconButton, Label, Pill } from '../../components/ui';
+import { Button, Card, Label, Pill } from '../../components/ui';
 import { getMap, getView, type MapDefinition, type Region } from '../../data/maps';
 import { buildQuestions, cheer, measurePlacement, placementTip, pointsFor, type DiagramMode, type Placement } from '../../lib/game';
 import { saveBest } from '../../lib/progress';
-import { colors, fonts, rate, RATING_LEGEND, useLayoutMode } from '../../theme';
+import { playSfx } from '../../lib/sound';
+import { colors, fonts, rate, useLayoutMode } from '../../theme';
 
 type Answer = {
   region: Region;
@@ -83,6 +84,7 @@ export default function Play() {
   };
 
   const next = () => {
+    playSfx('tap');
     setAttempt(null);
     setParty(null);
     setIndex((i) => i + 1);
@@ -92,6 +94,7 @@ export default function Play() {
   useEffect(() => {
     if (!finished || !answers.length || average === null) return;
     saveBest(map.id, mode, group, average).then(setNewBest);
+    playSfx('complete');
     if (average >= 70) {
       setParty({ kind: average >= 90 ? 'perfect' : 'great', origin: { x: rootSize.current.w / 2, y: rootSize.current.h / 2 }, caption: 'Round complete!', n: Date.now() });
     }
@@ -172,6 +175,7 @@ export default function Play() {
       speed: 18,
       bounciness: 6,
     }).start(() => setDragging(false));
+    playSfx('drop');
   };
 
   const record = (region: Region, placement: Placement | null, dx: number, dy: number) => {
@@ -193,6 +197,7 @@ export default function Play() {
         tip: placement && acc < 80 ? placementTip(map, region, dx, dy) : '',
       },
     ]);
+    playSfx(!placement ? 'tap' : tier === 'perfect' ? 'perfect' : tier === 'great' ? 'great' : tier === 'good' ? 'correct' : 'wrong');
     if (placement && (tier === 'perfect' || tier === 'great' || tier === 'good')) {
       const at = toRoot(region.cx, region.cy);
       setParty({ kind: tier, origin: at, caption: tier === 'perfect' ? message : '', n: Date.now() });
@@ -228,6 +233,7 @@ export default function Play() {
           const { root } = origin.current;
           pan.setValue({ x: g.x0 - root.x, y: g.y0 - root.y });
           setDragging(true);
+          playSfx('pickup');
         },
         onPanResponderMove: (_e, g) => {
           const { root } = origin.current;
@@ -258,65 +264,26 @@ export default function Play() {
     ? { left: -(current.cx - current.bbox[0]) * scale, top: -(current.cy - current.bbox[1]) * scale - lift }
     : { left: 0, top: 0 };
 
-  const fullscreen = () => {
-    if (Platform.OS !== 'web') return;
-    const d = globalThis.document as Document | undefined;
-    if (!d) return;
-    if (d.fullscreenElement) d.exitFullscreen?.();
-    else d.documentElement.requestFullscreen?.();
-  };
-
-  const progress = total ? answers.length / total : 0;
-
   const topBar = (
-    <View style={[styles.topBar, { paddingHorizontal: s(14), paddingVertical: s(10), gap: s(12) }]}>
-      <IconButton accessibilityLabel="Back to maps" size={s(42)} onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}>
-        <BackIcon size={s(20)} />
-      </IconButton>
-      <View style={{ flex: 1, gap: s(5) }}>
-        <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-          <Text style={[styles.topTitle, { fontSize: s(board ? 20 : 16) }]} numberOfLines={1}>
-            {map.title}
-            {group ? ` · ${group}` : ''}
-            <Text style={{ color: colors.inkSoft, fontFamily: fonts.bodyBold, fontSize: s(13) }}>  {mode === 'inline' ? 'Inline' : 'Outline'}</Text>
-          </Text>
-          <Text style={[styles.topCount, { fontSize: s(13) }]}>
-            {Math.min(answers.length, total)}/{total}
-          </Text>
-        </View>
-        <View style={[styles.progressTrack, { height: s(12) }]}>
-          <View style={[styles.progressFill, { width: `${progress * 100}%` }]}>
-            <View style={styles.progressShine} />
-          </View>
-        </View>
-      </View>
-      <Pill>
-        <StarIcon size={s(18)} />
-        <Text style={[styles.pillText, { fontSize: s(15) }]}>{stars}</Text>
-      </Pill>
-      <Pill style={streak >= 2 ? { borderColor: '#FFD2B8', borderBottomColor: '#FFB48A', backgroundColor: '#FFF4EC' } : undefined}>
-        <FlameIcon size={s(18)} active={streak > 0} />
-        <Text style={[styles.pillText, { fontSize: s(15) }]}>{streak}</Text>
-      </Pill>
-      {board && (
-        <Pill>
-          <Text style={[styles.pillText, { fontSize: s(15) }]}>{average === null ? '—' : `${average}%`}</Text>
-        </Pill>
-      )}
-      {Platform.OS === 'web' && board && (
-        <IconButton accessibilityLabel="Toggle full screen" size={s(42)} onPress={fullscreen}>
-          <ExpandIcon size={s(18)} />
-        </IconButton>
-      )}
-    </View>
+    <GameTopBar
+      s={s}
+      board={board}
+      title={`${map.title}${group ? ` · ${group}` : ''}`}
+      subtitle={mode === 'inline' ? 'Inline' : 'Outline'}
+      done={answers.length}
+      total={total}
+      stars={stars}
+      streak={streak}
+      extra={<StatPill s={s}>{average === null ? '—' : `${average}%`}</StatPill>}
+    />
   );
 
   const panel = finished ? (
-    <Results
+    <RoundResults
       s={s}
       board={board}
-      answers={answers}
-      average={average ?? 0}
+      scores={answers.map((a) => a.placement?.accuracy ?? 0)}
+      names={answers.map((a) => a.region.name)}
       points={points}
       stars={stars}
       newBest={newBest}
@@ -454,43 +421,10 @@ export default function Play() {
   );
 }
 
-function StarsRow({ count, size }: { count: number; size: number }) {
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 2 }}>
-      {[0, 1, 2].map((i) => (
-        <StarIcon key={i} size={i === 1 ? size * 1.2 : size} filled={i < count} />
-      ))}
-    </View>
-  );
-}
-
-function FocusIcon({ size }: { size: number }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24">
-      <Circle cx={12} cy={12} r={10} fill="#FFE2D6" />
-      <Circle cx={12} cy={12} r={6.5} fill="none" stroke={colors.coral} strokeWidth={2.2} />
-      <Circle cx={12} cy={12} r={2.6} fill={colors.coral} />
-    </Svg>
-  );
-}
-
 function ResultBlock({ answer, s, board, streak, map, mode }: { answer: Answer; s: (n: number) => number; board: boolean; streak: number; map: MapDefinition; mode: DiagramMode }) {
   const p = answer.placement;
   const r = rate(p?.accuracy ?? 0);
   const low = !p || p.accuracy < 50;
-  const pulse = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    if (!low) return;
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 1100, easing: Easing.inOut(Easing.sin), useNativeDriver: NATIVE }),
-        Animated.timing(pulse, { toValue: 0, duration: 1100, easing: Easing.inOut(Easing.sin), useNativeDriver: NATIVE }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [low, pulse]);
-
   const districts = mode === 'inline' && answer.region.districts?.length ? ` · ${answer.region.districts.length} districts` : '';
   const distance = p ? (p.km < 10 ? 'Right on the spot' : `Off by ~${p.km.toLocaleString()} km`) : '';
 
@@ -499,9 +433,9 @@ function ResultBlock({ answer, s, board, streak, map, mode }: { answer: Answer; 
     return (
       <View style={[styles.motivate, { padding: s(14), gap: s(8), borderRadius: s(18) }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: s(10) }}>
-          <Animated.View style={{ transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }) }] }}>
+          <Pulse>
             <FocusIcon size={s(34)} />
-          </Animated.View>
+          </Pulse>
           <View style={{ flex: 1 }}>
             {p && (
               <Text style={[styles.pct, { fontSize: s(board ? 30 : 24), color: r.color }]}>
@@ -543,82 +477,6 @@ function ResultBlock({ answer, s, board, streak, map, mode }: { answer: Answer; 
         )}
       </View>
       {answer.tip ? <Text style={[styles.tip, { fontSize: s(13) }]}>Tip: {answer.tip}</Text> : null}
-    </View>
-  );
-}
-
-function LegendLine({ color, label, size, dashed }: { color: string; label: string; size: number; dashed?: boolean }) {
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-      <View style={{ width: size * 1.8, height: 0, borderTopWidth: 3, borderColor: color, borderStyle: dashed ? 'dashed' : 'solid' }} />
-      <Text style={{ fontSize: size, color: colors.ink, fontFamily: fonts.bodyBold }}>{label}</Text>
-    </View>
-  );
-}
-
-function Results(props: {
-  s: (n: number) => number;
-  board: boolean;
-  answers: Answer[];
-  average: number;
-  points: number;
-  stars: number;
-  newBest: boolean;
-  onAgain: () => void;
-  onHome: () => void;
-}) {
-  const { s, board, answers, average, points, stars, newBest } = props;
-  const roundStars = average >= 90 ? 3 : average >= 70 ? 2 : average >= 45 ? 1 : 0;
-  const message =
-    average >= 90 ? 'Legendary explorer!' : average >= 70 ? 'Great expedition!' : average >= 45 ? 'Good effort!' : "Practice makes perfect — let's go again!";
-  const counts = RATING_LEGEND.map((l) => ({ ...l, n: answers.filter((a) => rate(a.placement?.accuracy ?? 0).tier === l.tier).length }));
-  const weak = answers.filter((a) => (a.placement?.accuracy ?? 0) < 50).map((a) => a.region.name).slice(0, 6);
-
-  return (
-    <Card lip={8} style={[board ? { width: s(360), padding: s(22) } : styles.sheet, { gap: s(14) }, styles.panel]}>
-      <ScrollView style={styles.panelScroll} contentContainerStyle={{ gap: s(14) }} showsVerticalScrollIndicator={false}>
-      <View style={{ alignItems: 'center', gap: s(4) }}>
-        <Label size={s(11)}>Round complete</Label>
-        <StarsRow count={roundStars} size={s(board ? 44 : 34)} />
-        <Text style={[styles.name, { fontSize: s(board ? 28 : 22), textAlign: 'center' }]}>{message}</Text>
-        {newBest && (
-          <Pill style={{ backgroundColor: colors.sun, borderColor: colors.sun, borderBottomColor: colors.sunDark }}>
-            <Text style={[styles.pillText, { fontSize: s(13) }]}>NEW BEST!</Text>
-          </Pill>
-        )}
-      </View>
-      <View style={{ flexDirection: 'row', gap: s(10) }}>
-        <Stat label="Accuracy" value={`${average}%`} color={rate(average).color} s={s} />
-        <Stat label="Points" value={String(points)} color={colors.primary} s={s} />
-        <Stat label="Stars" value={String(stars)} color={colors.sunDark} s={s} />
-      </View>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: s(10), justifyContent: 'center' }}>
-        {counts.map((c) => (
-          <View key={c.tier} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-            <View style={{ width: s(12), height: s(12), borderRadius: 4, backgroundColor: c.fill, borderBottomWidth: 2, borderBottomColor: c.side }} />
-            <Text style={{ fontSize: s(13), color: colors.ink, fontFamily: fonts.body }}>
-              {c.label} <Text style={{ fontFamily: fonts.black }}>{c.n}</Text>
-            </Text>
-          </View>
-        ))}
-      </View>
-      {weak.length > 0 && (
-        <Text style={[styles.tip, { fontSize: s(13), textAlign: 'center' }]}>Practise next: {weak.join(', ')}</Text>
-      )}
-      </ScrollView>
-      <View style={{ gap: s(10) }}>
-        <Button label="Play again" size={s(17)} onPress={props.onAgain} />
-        <Button label="Choose map" variant="soft" size={s(16)} onPress={props.onHome} />
-      </View>
-    </Card>
-  );
-}
-
-function Stat({ label, value, color, s }: { label: string; value: string; color: string; s: (n: number) => number }) {
-  return (
-    <View style={[styles.stat, { paddingVertical: s(8), borderRadius: s(14) }]}>
-      <Text style={{ fontFamily: fonts.display, fontSize: s(24), color }}>{value}</Text>
-      <Label size={s(10)}>{label}</Label>
     </View>
   );
 }

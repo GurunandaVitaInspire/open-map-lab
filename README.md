@@ -6,18 +6,21 @@ An open-source, completely free, interactive geography platform built with React
 
 ## What's here today
 
-| Map   | Regions | Diagram modes | Filters |
-|-------|---------|---------------|---------|
-| India | 28 states + 8 union territories (726 districts) | Outline, Inline (district boundaries) | — |
-| World | ~186 countries | Outline (coastlines), Inline (country borders) | Continent (the map zooms to the chosen continent) |
+Three games, picked from the home screen:
 
-**How a round works:** each question shows a region's name and shape. The student drags it onto the map and gets an accuracy score: the share of the shape that overlaps its real position, plus the distance in km.
+| Game | Maps | How it works |
+|------|------|--------------|
+| **Place it** | India (36 states/UTs), World (~186 countries, continent zoom) | A state/country name and shape appear; drag it onto the map. Scored by how much of the shape overlaps its real position, plus the distance in km. Outline / Inline modes. |
+| **Name it** | India | One state blinks on the map; pick its name from four big buttons. Wrong options are neighbouring states. Retry until right: 1st try = 3 stars, 2nd = 2, 3rd = 1, with hints (where it is, which state it borders) after a miss. |
+| **Puzzle** | India | 31 chunky state pieces arrive in a small tray (6 at a time on big screens, 4 on phones). Drag them onto the India outline, or tap a piece then tap its spot. Pieces snap in when close; the slot glows as you get near. Hint button, timer and miss counter. Tiny UTs are pre-placed. "With guides" shows faint state borders. |
 
-**Game feel:** a 3D map slab on a wave-patterned ocean, chunky pressable buttons, the Baloo 2 and Nunito fonts, stars, streaks and points, and a best score saved on the device (no account).
-- 100%: a firework blast from the placed region, a flash, confetti rain and a PERFECT badge (plus a haptic buzz on phones)
-- 80–99%: a confetti burst and a GREAT badge
+**Game feel:** a 3D map slab on a wave-patterned ocean, chunky pressable buttons, the Baloo 2 and Nunito fonts, stars, streaks and points, and best scores saved on the device (no account).
+- 100% / first try: a firework blast from the region, a flash, confetti rain and a PERFECT badge (plus a haptic buzz on phones)
+- 80–99% / second try: a confetti burst and a GREAT badge
 - 50–79%: sparkling stars and a NICE badge
 - below 50%: a calm, motivating card with a location tip (e.g. "Kerala is in the south-west of India. You were too far north.")
+
+**Sound:** CC0 sound effects for taps, pick-up, drop, snap, correct, wrong and rewards, plus an optional background music loop. Effects are on and music is off by default; both toggles live on the home screen and in the game header on big screens, and are remembered on the device. Credits: [assets/sounds/CREDITS.md](assets/sounds/CREDITS.md).
 
 **Two layouts, same game**
 - *Phone* (narrow screens): map on top, shape tray at the bottom.
@@ -38,11 +41,17 @@ npm run ios        # iOS (macOS required, or Expo Go)
 
 `vercel.json` is already set up: Vercel runs `expo export -p web`, serves the `dist` folder, and sends every path to the single-page app so links like `/play/india` work. In the Vercel project settings, leave **Framework Preset** as *Other* and use Node.js 22 or newer.
 
+### Tip: keep the project out of OneDrive
+
+If the project folder is synced by OneDrive, the bundler can briefly fail to see newly installed packages or new files ("Unable to resolve …") while OneDrive is still processing them. Waiting a moment and restarting with `npx expo start --clear` fixes it; moving the project to a non-synced folder avoids it.
+
 ## Project layout
 
 ```
-src/app/              Expo Router screens (index = map picker, play/[map] = game)
-src/components/       MapCanvas (base map), RegionShape (draggable piece), ui
+src/app/              Expo Router screens (index = game picker, play/ = Place it, quiz/ = Name it, puzzle/ = Puzzle)
+src/components/       MapCanvas (base map), RegionShape (piece), GameUI (shared header/results), Celebration, ui
+src/lib/sound.ts      Sound effects and music (expo-audio)
+assets/sounds/        CC0 audio (see CREDITS.md)
 src/data/maps.ts      Map registry — add new maps here
 src/data/generated/   Pre-projected SVG path data (built by the script below)
 src/lib/game.ts       Question generation and drop checking

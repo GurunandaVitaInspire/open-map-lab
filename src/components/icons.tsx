@@ -54,3 +54,41 @@ export function CompassRose({ size = 54 }: { size?: number }) {
     </Svg>
   );
 }
+
+export function SpeakerIcon({ size = 20, on = true, color = colors.ink }: { size?: number; on?: boolean; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill={color} stroke={color} strokeWidth={1.5} strokeLinejoin="round" />
+      {on ? (
+        <Path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" fill="none" stroke={color} strokeWidth={2.2} strokeLinecap="round" />
+      ) : (
+        <Path d="M16 9.5l5 5M21 9.5l-5 5" fill="none" stroke={colors.coral} strokeWidth={2.4} strokeLinecap="round" />
+      )}
+    </Svg>
+  );
+}
+
+export function MusicIcon({ size = 20, on = true, color = colors.ink }: { size?: number; on?: boolean; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M9 17.5V6l10-2v11.5" fill="none" stroke={on ? color : '#B5ADD3'} strokeWidth={2.2} strokeLinejoin="round" />
+      <Circle cx={6.5} cy={17.5} r={2.6} fill={on ? color : '#B5ADD3'} />
+      <Circle cx={16.5} cy={15.5} r={2.6} fill={on ? color : '#B5ADD3'} />
+      {!on && <Path d="M4 4l16 16" stroke={colors.coral} strokeWidth={2.4} strokeLinecap="round" />}
+    </Svg>
+  );
+}
+
+export function PuzzleIcon({ size = 24, color = colors.primary }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path
+        d="M4 8h3.2a2.3 2.3 0 1 1 4.6 0H15v3.2a2.3 2.3 0 1 1 0 4.6V19H11.8a2.3 2.3 0 1 0-4.6 0H4z"
+        fill={color}
+        stroke={color}
+        strokeWidth={1.2}
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}

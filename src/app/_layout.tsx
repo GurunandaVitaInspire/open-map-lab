@@ -3,7 +3,9 @@ import { Nunito_600SemiBold, Nunito_800ExtraBold, Nunito_900Black } from '@expo-
 import { FontDisplay, useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
 import { Platform } from 'react-native';
+import { initSound } from '../lib/sound';
 import { colors } from '../theme';
 
 // On the web, show text in a system font straight away and swap in the custom fonts once they
@@ -11,6 +13,9 @@ import { colors } from '../theme';
 const swap = (uri: number) => ({ uri, display: FontDisplay.SWAP });
 
 export default function RootLayout() {
+  useEffect(() => {
+    initSound();
+  }, []);
   const [loaded, error] = useFonts({
     Baloo2_700Bold: swap(Baloo2_700Bold),
     Baloo2_800ExtraBold: swap(Baloo2_800ExtraBold),

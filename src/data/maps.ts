@@ -10,6 +10,8 @@ export type Region = {
   /** internal boundaries (districts etc.), used in Inline mode */
   inner?: string;
   districts?: string[];
+  /** ids of regions sharing a border (India only) */
+  neighbors?: string[];
   cx: number;
   cy: number;
   bbox: [number, number, number, number];

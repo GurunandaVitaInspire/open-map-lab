@@ -4,7 +4,7 @@ import Svg, { G, Path } from 'react-native-svg';
 import { colors, fonts } from '../theme';
 import { StarIcon } from './icons';
 
-export type CelebrationKind = 'perfect' | 'great' | 'good';
+export type CelebrationKind = 'perfect' | 'great' | 'good' | 'sparkle';
 
 type Props = {
   kind: CelebrationKind;
@@ -129,6 +129,7 @@ export function Celebration({ kind, origin, width, height, caption, trigger }: P
   const particles = useMemo(() => {
     if (kind === 'perfect') return burst(48, [260, 520], 900, [8, 15], ['square', 'ribbon', 'circle', 'star']);
     if (kind === 'great') return burst(26, [160, 320], 700, [7, 12], ['square', 'ribbon', 'circle']);
+    if (kind === 'sparkle') return burst(12, [60, 140], 220, [8, 13], ['star', 'circle']);
     return burst(9, [70, 130], 260, [9, 12], ['star']);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, trigger]);
@@ -199,6 +200,7 @@ export function Celebration({ kind, origin, width, height, caption, trigger }: P
         <ParticleView key={`r${i}`} p={p} progress={rainP} origin={{ x: 0, y: 0 }} />
       ))}
 
+      {kind !== 'sparkle' && (
       <Animated.View
         style={{
           position: 'absolute',
@@ -250,6 +252,7 @@ export function Celebration({ kind, origin, width, height, caption, trigger }: P
           <Text style={{ fontFamily: fonts.display, fontSize: Math.min(30, width / 14), color: colors.ink, marginTop: 6 }}>{caption}</Text>
         ) : null}
       </Animated.View>
+      )}
     </View>
   );
 }
