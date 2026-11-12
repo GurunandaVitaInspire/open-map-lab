@@ -12,9 +12,11 @@ Three games, picked from the home screen:
 |------|------|--------------|
 | **Place it** | India (36 states/UTs), World (~186 countries, continent zoom) | A state/country name and shape appear; drag it onto the map. Scored by how much of the shape overlaps its real position, plus the distance in km. Outline / Inline modes. |
 | **Name it** | India | One state blinks on the map; pick its name from four big buttons. Wrong options are neighbouring states. Retry until right: 1st try = 3 stars, 2nd = 2, 3rd = 1, with hints (where it is, which state it borders) after a miss. |
-| **Puzzle** | India | 31 chunky state pieces arrive in a small tray (6 at a time on big screens, 4 on phones). Drag them onto the India outline, or tap a piece then tap its spot. Pieces snap in when close; the slot glows as you get near. Hint button, timer and miss counter. Tiny UTs are pre-placed. "With guides" shows faint state borders. |
+| **India Jigsaw** | India | A classic knobbed jigsaw cut from a colourful India map with every state's name printed in its middle (plus sea names, a title box and a compass). Pieces come out of a box onto a wooden table a few at a time; drag them onto the board (or tap a piece, then its spot) and they snap in when close. 12 / 20 / 30 pieces, optional faint picture guide, Peek, Hint, timer and misses. |
 
-**Game feel:** a 3D map slab on a wave-patterned ocean, chunky pressable buttons, the Baloo 2 and Nunito fonts, stars, streaks and points, and best scores saved on the device (no account).
+**Landing page:** a big two-line headline that reveals word by word, game cards hanging from a rope like polaroids (they drop in with a swing, sway gently and kick when tapped), drifting clouds, and a moving sea with layered waves, a bobbing paper boat and a scrolling feature ticker. Tapping a card opens a setup sheet with that game's options. A **pause-motion** button stops all ambient animation (it is also off when the device asks for reduced motion).
+
+**Game feel:** a 3D map slab on a gently moving, wave-patterned ocean, chunky pressable buttons, the Baloo 2 and Nunito fonts, stars, streaks and points, and best scores saved on the device (no account).
 - 100% / first try: a firework blast from the region, a flash, confetti rain and a PERFECT badge (plus a haptic buzz on phones)
 - 80–99% / second try: a confetti burst and a GREAT badge
 - 50–79%: sparkling stars and a NICE badge
@@ -48,9 +50,11 @@ If the project folder is synced by OneDrive, the bundler can briefly fail to see
 ## Project layout
 
 ```
-src/app/              Expo Router screens (index = game picker, play/ = Place it, quiz/ = Name it, puzzle/ = Puzzle)
+src/app/              Expo Router screens (index = landing page, play/ = Place it, quiz/ = Name it, puzzle/ = India Jigsaw)
 src/components/       MapCanvas (base map), RegionShape (piece), GameUI (shared header/results), Celebration, ui
 src/lib/sound.ts      Sound effects and music (expo-audio)
+src/lib/motion.ts     Pause-motion / reduced-motion setting
+src/lib/jigsaw.ts     Jigsaw cutter (knobbed piece outlines)
 assets/sounds/        CC0 audio (see CREDITS.md)
 src/data/maps.ts      Map registry — add new maps here
 src/data/generated/   Pre-projected SVG path data (built by the script below)

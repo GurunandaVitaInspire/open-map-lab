@@ -92,3 +92,17 @@ export function PuzzleIcon({ size = 24, color = colors.primary }: { size?: numbe
     </Svg>
   );
 }
+
+/** Wave with a play/pause badge: toggles ambient motion. */
+export function MotionIcon({ size = 20, on = true, color = colors.ink }: { size?: number; on?: boolean; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M2 14c2.5-3 5-3 7.5 0s5 3 7.5 0" fill="none" stroke={on ? colors.sky : '#B5ADD3'} strokeWidth={2.4} strokeLinecap="round" />
+      {on ? (
+        <Path d="M16 3.5v7M20 3.5v7" stroke={color} strokeWidth={2.4} strokeLinecap="round" />
+      ) : (
+        <Path d="M16 3l5 3.5-5 3.5z" fill={color} stroke={color} strokeWidth={1.5} strokeLinejoin="round" />
+      )}
+    </Svg>
+  );
+}

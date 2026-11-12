@@ -1,79 +1,89 @@
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
-import { Animated, Easing, PanResponder, Platform, Pressable, StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
+import { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, PanResponder, Platform, Pressable, StyleSheet, Text, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { OceanBackdrop } from '../../components/Backdrops';
+import Svg, { ClipPath, Defs, G, Path, Pattern, Rect } from 'react-native-svg';
 import { Celebration, type CelebrationKind } from '../../components/Celebration';
 import { GameTopBar, NATIVE, RoundResults, StatPill, gameStyles } from '../../components/GameUI';
-import { CompassRose } from '../../components/icons';
-import { MapCanvas } from '../../components/MapCanvas';
-import { RegionHighlight } from '../../components/RegionHighlight';
-import { RegionShape, fitScale } from '../../components/RegionShape';
-import { useMapFrame } from '../../components/useMapFrame';
-import { Button, Card, Label } from '../../components/ui';
-import { MAPS, getView, type Region } from '../../data/maps';
-import { PUZZLE_MIN_AREA, puzzleScore, shuffle, type DiagramMode } from '../../lib/game';
+import { PictureContent, buildPicture, type Picture } from '../../components/PuzzlePicture';
+import { Button } from '../../components/ui';
+import { MAPS } from '../../data/maps';
+import { puzzleScore, shuffle } from '../../lib/game';
+import { PUZZLE_SIZES, makeJigsaw, type Jigsaw, type Piece } from '../../lib/jigsaw';
 import { saveBest } from '../../lib/progress';
 import { playSfx } from '../../lib/sound';
 import { colors, fonts, rate, useLayoutMode } from '../../theme';
 
-/** Bright, toy-like colours for placed pieces (top face, extruded side). */
-const PIECE_COLORS = [
-  { fill: '#FF8A80', side: '#E0605A' },
-  { fill: '#FFD54A', side: '#E0A400' },
-  { fill: '#7DDB9E', side: '#3BAA68' },
-  { fill: '#7FC4FF', side: '#3E8FD6' },
-  { fill: '#B79CFF', side: '#8566E8' },
-  { fill: '#FFB070', side: '#E07F35' },
-  { fill: '#6EDAD4', side: '#2EA9A2' },
-  { fill: '#FF9BD2', side: '#E063A8' },
-];
-const FIXED = { fill: '#E3DCFA', side: '#BDB2E6' }; // tiny regions placed for you
-
-function pieceColor(id: string) {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return PIECE_COLORS[h % PIECE_COLORS.length];
-}
-
 const fmtTime = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 
-export default function Puzzle() {
-  // This game is India only.
-  const map = MAPS.india;
-  const params = useLocalSearchParams<{ mode?: string }>();
-  const mode: DiagramMode = params.mode === 'inline' ? 'inline' : 'outline'; // inline = state borders as guides
-  const { mode: layout, s, width } = useLayoutMode();
-  const board = layout === 'board';
-  const view = useMemo(() => getView(map), [map]);
-  const frame = useMapFrame(view);
+type Slot = { x: number; y: number; rot: number };
+type Layout = {
+  ready: boolean;
+  frame: { x: number; y: number; w: number; h: number };
+  scale: number; // px per picture unit
+  slotScale: number; // loose pieces sit a little smaller on the table
+  slots: Slot[];
+};
+type Anim = { pos: Animated.ValueXY; rot: Animated.Value; sc: Animated.Value; scNow: number };
+type Handlers = {
+  grant: (id: string) => void;
+  move: (id: string, dx: number, dy: number) => void;
+  release: (id: string, dx: number, dy: number, tap: boolean) => void;
+};
 
+export default function PuzzleGame() {
+  // India only.
+  const map = MAPS.india;
+  const params = useLocalSearchParams<{ mode?: string; count?: string }>();
+  const ghost = params.mode !== 'outline'; // faint picture guide on the board (default on)
+  const count = PUZZLE_SIZES[Number(params.count)] ? Number(params.count) : 12;
+  const { rows, cols } = PUZZLE_SIZES[count];
+  const { mode: layoutMode, s } = useLayoutMode();
+  const board = layoutMode === 'board';
+
+  const pic = useMemo(() => buildPicture(map.data), [map]);
   const [round, setRound] = useState(0);
-  const pieces = useMemo(
-    () => shuffle(map.data.regions.filter((r) => r.area >= PUZZLE_MIN_AREA)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [round],
-  );
-  const fixed = useMemo(() => map.data.regions.filter((r) => r.area < PUZZLE_MIN_AREA), [map]);
+  const jig = useMemo(() => makeJigsaw(pic.width, pic.height, rows, cols, Date.now() + round), [pic, rows, cols, round]);
+  const order = useMemo(() => shuffle(jig.pieces.map((p) => p.id)), [jig]);
+  const byId = useMemo(() => new Map(jig.pieces.map((p) => [p.id, p])), [jig]);
+
+  // ---- table layout ------------------------------------------------------------
+  const [table, setTable] = useState({ w: 0, h: 0 });
+  const onTableLayout = (e: LayoutChangeEvent) => setTable({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height });
+  const L: Layout = useMemo(() => computeLayout(table.w, table.h, jig, board), [table, jig, board]);
+
+  // ---- game state --------------------------------------------------------------
   const [placed, setPlaced] = useState<Record<string, number>>({}); // id -> misses before placing
+  const [slotPieces, setSlotPieces] = useState<(string | null)[]>([]);
   const [misses, setMisses] = useState<Record<string, number>>({});
   const [selected, setSelected] = useState<string | null>(null);
-  const [dragging, setDragging] = useState<Region | null>(null);
-  const [nearId, setNearId] = useState<string | null>(null);
+  const [top, setTop] = useState<string | null>(null);
   const [hintId, setHintId] = useState<string | null>(null);
   const [hints, setHints] = useState(0);
+  const [peeks, setPeeks] = useState(0);
   const [message, setMessage] = useState<{ text: string; tone: 'ok' | 'miss' } | null>(null);
   const [party, setParty] = useState<{ kind: CelebrationKind; origin: { x: number; y: number }; caption: string; n: number } | null>(null);
   const [seconds, setSeconds] = useState(0);
   const [newBest, setNewBest] = useState(false);
 
-  const total = pieces.length;
-  const doneCount = Object.keys(placed).length;
-  const finished = total > 0 && doneCount >= total;
-  const trayCount = board ? 6 : 4;
-  const tray = pieces.filter((p) => placed[p.id] === undefined).slice(0, trayCount);
-  const mistakes = Object.values(misses).reduce((a, b) => a + b, 0);
+  const total = jig.pieces.length;
+  const placedCount = Object.keys(placed).length;
+  const finished = placedCount >= total;
+  const onTable = slotPieces.filter(Boolean).length;
+  const inBox = total - placedCount - onTable;
+
+  // deal pieces from the box into free table slots
+  useEffect(() => {
+    if (!L.ready) return;
+    setSlotPieces((cur) => {
+      const next = L.slots.map((_, i) => cur[i] ?? null);
+      const used = new Set([...next.filter(Boolean), ...Object.keys(placed)] as string[]);
+      const queue = order.filter((id) => !used.has(id));
+      for (let i = 0; i < next.length; i++) if (!next[i] && queue.length) next[i] = queue.shift()!;
+      return next.length === cur.length && next.every((v, i) => v === cur[i]) ? cur : next;
+    });
+  }, [L, order, placed]);
 
   // timer
   useEffect(() => {
@@ -84,300 +94,477 @@ export default function Puzzle() {
 
   useEffect(() => {
     if (!party) return;
-    const t = setTimeout(() => setParty(null), party.kind === 'perfect' ? 3200 : 1100);
+    const t = setTimeout(() => setParty(null), party.kind === 'perfect' ? 3400 : 1100);
     return () => clearTimeout(t);
   }, [party]);
-
   useEffect(() => {
     if (!hintId) return;
     const t = setTimeout(() => setHintId(null), 2600);
     return () => clearTimeout(t);
   }, [hintId]);
 
-  const scoresList = pieces.filter((p) => placed[p.id] !== undefined).map((p) => puzzleScore(placed[p.id]));
-  const average = scoresList.length ? Math.round(scoresList.reduce((a, b) => a + b, 0) / scoresList.length) : 0;
-  const stars = scoresList.reduce((n, v) => n + rate(v).stars, 0);
-  const points = scoresList.reduce((a, b) => a + b, 0) + Math.max(0, 300 - seconds) - hints * 20;
+  const scores = jig.pieces.filter((p) => placed[p.id] !== undefined).map((p) => puzzleScore(placed[p.id]));
+  const average = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+  const stars = scores.reduce((n, v) => n + rate(v).stars, 0);
+  const points = Math.max(0, scores.reduce((a, b) => a + b, 0) + Math.max(0, 300 - seconds) - hints * 20 - peeks * 10);
+  const mistakes = Object.values(misses).reduce((a, b) => a + b, 0);
 
   useEffect(() => {
-    if (!finished) return;
+    if (!finished || !total) return;
     playSfx('complete');
-    setTimeout(() => playSfx('perfect'), 600);
-    saveBest('puzzle-india', mode, undefined, average).then(setNewBest);
-    setParty({ kind: 'perfect', origin: { x: frame.rootSize.w / 2, y: frame.rootSize.h / 2 }, caption: 'India complete!', n: Date.now() });
+    setTimeout(() => playSfx('perfect'), 650);
+    saveBest('puzzle-india', ghost ? 'inline' : 'outline', String(count), average).then(setNewBest);
+    setParty({ kind: 'perfect', origin: { x: table.w / 2, y: table.h / 2 }, caption: 'You built India!', n: Date.now() });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finished]);
 
-  // ---- map board data -------------------------------------------------------
-  const boardScores = useMemo(() => {
-    const out: Record<string, number> = {};
-    fixed.forEach((r) => (out[r.id] = 100));
-    Object.keys(placed).forEach((id) => (out[id] = 100));
-    return out;
-  }, [placed, fixed]);
-  const fills = useMemo(() => {
-    const out: Record<string, { fill: string; side: string }> = {};
-    fixed.forEach((r) => (out[r.id] = FIXED));
-    Object.keys(placed).forEach((id) => (out[id] = pieceColor(id)));
-    return out;
-  }, [placed, fixed]);
-
-  // ---- placing pieces ---------------------------------------------------------
-  const tolerancePx = (r: Region) => Math.max(26, Math.min(70, Math.sqrt(r.area) * frame.scale * 0.45));
-
-  /** Try to place `r` with its centre at map point (mx, my). Returns true when it snapped in. */
-  const tryPlace = (r: Region, mx: number, my: number): boolean => {
-    const dist = Math.hypot(mx - r.cx, my - r.cy) * frame.scale;
-    if (dist <= tolerancePx(r)) {
-      setPlaced((p) => ({ ...p, [r.id]: misses[r.id] ?? 0 }));
-      setSelected(null);
-      setHintId(null);
-      playSfx('snap');
-      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-      setParty({ kind: 'sparkle', origin: frame.toRoot(r.cx, r.cy), caption: '', n: Date.now() });
-      setMessage({ text: `${r.name} fits!`, tone: 'ok' });
-      return true;
+  // ---- per-piece animation values (position, rotation, scale) -----------------
+  const anim = useRef(new Map<string, Anim>()).current;
+  const getAnim = (id: string) => {
+    let a = anim.get(id);
+    if (!a) {
+      const created: Anim = { pos: new Animated.ValueXY({ x: 0, y: 0 }), rot: new Animated.Value(0), sc: new Animated.Value(0), scNow: 0 };
+      created.sc.addListener(({ value }) => (created.scNow = value));
+      anim.set(id, created);
+      a = created;
     }
-    setMisses((m) => ({ ...m, [r.id]: (m[r.id] ?? 0) + 1 }));
-    playSfx('wrong');
-    setMessage({ text: `Not quite — ${r.name} goes somewhere else. Try again!`, tone: 'miss' });
-    return false;
+    return a;
+  };
+  const slotOf = (id: string) => slotPieces.indexOf(id);
+  const target = (p: Piece) => ({ x: L.frame.x + (p.x + p.w / 2) * L.scale, y: L.frame.y + (p.y + p.h / 2) * L.scale });
+
+  // put each table piece on its slot (and pop new ones out of the box)
+  useEffect(() => {
+    if (!L.ready) return;
+    slotPieces.forEach((id, i) => {
+      if (!id) return;
+      const a = getAnim(id);
+      const slot = L.slots[i];
+      if (a.scNow === 0) {
+        a.pos.setValue({ x: slot.x, y: slot.y - 40 });
+        a.rot.setValue(slot.rot * 2);
+      }
+      Animated.parallel([
+        Animated.spring(a.pos, { toValue: { x: slot.x, y: slot.y }, useNativeDriver: false, friction: 6, tension: 60 }),
+        Animated.spring(a.rot, { toValue: slot.rot, useNativeDriver: false, friction: 5 }),
+        Animated.spring(a.sc, { toValue: L.slotScale, useNativeDriver: false, friction: 6 }),
+      ]).start();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slotPieces, L]);
+
+  const backToSlot = (id: string) => {
+    const i = slotOf(id);
+    const a = getAnim(id);
+    if (i < 0) return;
+    const slot = L.slots[i];
+    Animated.parallel([
+      Animated.spring(a.pos, { toValue: { x: slot.x, y: slot.y }, useNativeDriver: false, friction: 7, tension: 70 }),
+      Animated.spring(a.rot, { toValue: slot.rot, useNativeDriver: false }),
+      Animated.spring(a.sc, { toValue: L.slotScale, useNativeDriver: false }),
+    ]).start();
   };
 
-  // drag state shared with the tray tiles
-  const pan = useRef(new Animated.ValueXY()).current;
-  const lift = Platform.OS === 'web' ? 0 : 56; // keep the piece visible above a finger
-  const home = useRef({ x: 0, y: 0 });
-
-  const startDrag = (r: Region, pageX: number, pageY: number, tileCenter: { x: number; y: number }) => {
-    frame.measure();
-    const { root } = frame.origin.current;
-    home.current = { x: tileCenter.x - root.x, y: tileCenter.y - root.y + lift };
-    pan.setValue({ x: pageX - root.x, y: pageY - root.y });
-    setDragging(r);
+  const place = (id: string) => {
+    const p = byId.get(id)!;
+    const a = getAnim(id);
+    const t = target(p);
+    playSfx('snap');
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     setSelected(null);
-    playSfx('pickup');
+    setHintId(null);
+    Animated.parallel([
+      Animated.spring(a.pos, { toValue: t, useNativeDriver: false, friction: 7, tension: 120 }),
+      Animated.spring(a.rot, { toValue: 0, useNativeDriver: false }),
+      Animated.spring(a.sc, { toValue: 1, useNativeDriver: false }),
+    ]).start(() => {
+      setPlaced((pl) => ({ ...pl, [id]: misses[id] ?? 0 }));
+      setSlotPieces((sp) => sp.map((x) => (x === id ? null : x)));
+      setParty({ kind: 'sparkle', origin: t, caption: '', n: Date.now() });
+    });
+    setMessage({ text: 'Perfect fit!', tone: 'ok' });
   };
-  const moveDrag = (r: Region, pageX: number, pageY: number) => {
-    const { root } = frame.origin.current;
-    pan.setValue({ x: pageX - root.x, y: pageY - root.y });
-    const m = frame.pageToMap(pageX, pageY - lift);
-    const near = Math.hypot(m.x - r.cx, m.y - r.cy) * frame.scale <= tolerancePx(r) * 1.25;
-    setNearId((cur) => (near ? r.id : cur === r.id ? null : cur));
+
+  const miss = (id: string) => {
+    setMisses((m) => ({ ...m, [id]: (m[id] ?? 0) + 1 }));
+    playSfx('wrong');
+    setMessage({ text: "That piece doesn't fit there — look at the names and shapes!", tone: 'miss' });
+    backToSlot(id);
   };
-  const endDrag = (r: Region, pageX: number, pageY: number) => {
-    setNearId(null);
-    const m = frame.pageToMap(pageX, pageY - lift);
-    if (frame.inMap(m.x, m.y) && tryPlace(r, m.x, m.y)) {
-      setDragging(null);
+
+  // drag callbacks, kept fresh through a ref so each piece's PanResponder is created once
+  const dragStart = useRef({ x: 0, y: 0 });
+  const handlers = useRef<Handlers>({ grant: () => {}, move: () => {}, release: () => {} });
+  handlers.current.grant = (id) => {
+    const a = getAnim(id);
+    a.pos.stopAnimation((v) => (dragStart.current = v));
+    setTop(id);
+  };
+  handlers.current.move = (id, dx, dy) => {
+    const a = getAnim(id);
+    if (Math.hypot(dx, dy) > 6 && a.scNow < 1) {
+      a.scNow = 1; // only trigger the pick-up once
+      playSfx('pickup');
+      Animated.parallel([
+        Animated.spring(a.sc, { toValue: 1.04, useNativeDriver: false, friction: 6 }),
+        Animated.spring(a.rot, { toValue: 0, useNativeDriver: false }),
+      ]).start();
+    }
+    a.pos.setValue({ x: dragStart.current.x + dx, y: dragStart.current.y + dy });
+  };
+  handlers.current.release = (id, dx, dy, tap) => {
+    if (tap) {
+      playSfx('tap');
+      setSelected((cur) => (cur === id ? null : id));
       return;
     }
-    if (!frame.inMap(m.x, m.y)) playSfx('drop');
-    Animated.spring(pan, { toValue: home.current, useNativeDriver: false, speed: 18, bounciness: 7 }).start(() => setDragging(null));
+    const p = byId.get(id)!;
+    const c = { x: dragStart.current.x + dx, y: dragStart.current.y + dy };
+    const t = target(p);
+    const tol = Math.min(p.w, p.h) * L.scale * 0.32;
+    const f = L.frame;
+    if (Math.hypot(c.x - t.x, c.y - t.y) <= tol) place(id);
+    else if (c.x > f.x && c.x < f.x + f.w && c.y > f.y && c.y < f.y + f.h) miss(id);
+    else {
+      playSfx('drop');
+      backToSlot(id);
+    }
   };
 
-  // tap-to-place: tap a piece, then tap the map
+  // tap-to-place: tap a piece, then tap its spot on the board
   const onBoardPress = (e: GestureResponderEvent) => {
-    const r = pieces.find((p) => p.id === selected);
-    if (!r) return;
-    frame.measure();
-    const m = frame.pageToMap(e.nativeEvent.pageX, e.nativeEvent.pageY);
-    if (frame.inMap(m.x, m.y)) tryPlace(r, m.x, m.y);
+    if (!selected) return;
+    const p = byId.get(selected)!;
+    const { locationX, locationY } = e.nativeEvent;
+    const col = Math.floor(locationX / (jig.cellW * L.scale));
+    const row = Math.floor(locationY / (jig.cellH * L.scale));
+    if (row === p.row && col === p.col) place(p.id);
+    else miss(p.id);
   };
 
+  // peek at the finished picture
+  const peek = useRef(new Animated.Value(0)).current;
+  const doPeek = () => {
+    playSfx('tap');
+    setPeeks((n) => n + 1);
+    Animated.sequence([
+      Animated.timing(peek, { toValue: 1, duration: 220, useNativeDriver: NATIVE }),
+      Animated.delay(1800),
+      Animated.timing(peek, { toValue: 0, duration: 400, useNativeDriver: NATIVE }),
+    ]).start();
+  };
   const hint = () => {
-    const r = pieces.find((p) => p.id === selected) ?? tray[0];
-    if (!r) return;
+    const id = selected ?? slotPieces.find(Boolean);
+    if (!id) return;
     playSfx('tap');
     setHints((h) => h + 1);
-    setHintId(r.id);
-    setMessage({ text: `${r.name} goes in the glowing spot.`, tone: 'ok' });
+    setHintId(id);
+    setSelected(id);
+    const a = getAnim(id);
+    Animated.sequence([
+      Animated.timing(a.rot, { toValue: 8, duration: 90, useNativeDriver: false }),
+      Animated.timing(a.rot, { toValue: -8, duration: 120, useNativeDriver: false }),
+      Animated.spring(a.rot, { toValue: L.slots[slotOf(id)]?.rot ?? 0, useNativeDriver: false }),
+    ]).start();
+    setMessage({ text: 'The glowing spot is where the wiggling piece goes.', tone: 'ok' });
   };
 
   const restart = () => {
+    anim.forEach((a) => a.sc.removeAllListeners());
+    anim.clear();
     setRound((x) => x + 1);
     setPlaced({});
+    setSlotPieces([]);
     setMisses({});
     setSelected(null);
     setHints(0);
+    setPeeks(0);
     setMessage(null);
     setSeconds(0);
     setParty(null);
     setNewBest(false);
   };
 
-  // ---- layout ---------------------------------------------------------------
-  const tile = board ? s(112) : Math.max(64, Math.min(90, (width - 20 - 28 - 3 * 8) / 4));
-  const hintRegion = hintId ? pieces.find((p) => p.id === hintId) : undefined;
-  const nearRegion = nearId ? pieces.find((p) => p.id === nearId) : undefined;
-  const anchor = dragging
-    ? { left: -(dragging.cx - dragging.bbox[0]) * frame.scale, top: -(dragging.cy - dragging.bbox[1]) * frame.scale - lift }
-    : { left: 0, top: 0 };
-
-  const panel = finished ? (
-    <RoundResults
-      s={s}
-      board={board}
-      scores={scoresList}
-      names={pieces.map((p) => p.name)}
-      points={Math.max(0, points)}
-      stars={stars}
-      newBest={newBest}
-      headline={{ label: 'Time', value: fmtTime(seconds), color: colors.ink }}
-      hideBreakdown
-      onAgain={restart}
-      onHome={() => router.replace('/')}
-    />
-  ) : (
-    <Card lip={board ? 8 : 6} style={[board ? { width: s(300), padding: s(18), gap: s(12) } : [gameStyles.sheet, { gap: 10, padding: 12 }], gameStyles.panel]}>
-      <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' }}>
-        <Label size={s(11)}>{selected ? 'Now tap its spot on the map' : 'Drag a piece onto India'}</Label>
-        <Text style={{ fontFamily: fonts.black, color: colors.inkSoft, fontSize: s(12) }}>
-          {total - doneCount} left
-        </Text>
-      </View>
-      <View style={[styles.tray, { gap: board ? s(10) : 8 }]}>
-        {tray.map((r) => (
-          <TrayPiece
-            key={r.id}
-            region={r}
-            size={tile}
-            inline={false}
-            selected={selected === r.id}
-            hidden={dragging?.id === r.id}
-            onStart={startDrag}
-            onMove={moveDrag}
-            onEnd={endDrag}
-            onTap={(x) => {
-              playSfx('tap');
-              setSelected((cur) => (cur === x.id ? null : x.id));
-            }}
-          />
-        ))}
-      </View>
-      <Text
-        style={[
-          styles.message,
-          { fontSize: s(13), minHeight: s(36), color: message?.tone === 'miss' ? '#B7413A' : colors.inkSoft },
-        ]}
-        numberOfLines={2}
-      >
-        {message?.text ?? (selected ? 'Tip: you can also drag pieces.' : 'Tip: tap a piece, then tap where it goes.')}
-      </Text>
-      <Button label="Hint" variant="soft" size={s(14)} onPress={hint} />
-    </Card>
-  );
+  const hintPiece = hintId ? byId.get(hintId) : undefined;
+  const loose = slotPieces.filter((x): x is string => !!x);
+  // the piece being moved is drawn last so it floats above the others
+  const drawOrder = [...loose.filter((id) => id !== top), ...loose.filter((id) => id === top)];
 
   return (
     <SafeAreaView style={gameStyles.safe} edges={['top', 'bottom', 'left', 'right']}>
-      <View ref={frame.rootRef} style={gameStyles.root} onLayout={frame.onRootLayout}>
+      <View style={gameStyles.root}>
         <GameTopBar
           s={s}
           board={board}
-          title="Puzzle · India"
-          subtitle={mode === 'inline' ? 'With guides' : 'No guides'}
-          done={doneCount}
+          title="Jigsaw · India"
+          subtitle={`${total} pieces`}
+          done={placedCount}
           total={total}
           stars={stars}
           extra={
             <>
               <StatPill s={s}>{fmtTime(seconds)}</StatPill>
-              <StatPill s={s}>{mistakes} {mistakes === 1 ? "miss" : "misses"}</StatPill>
+              <StatPill s={s}>
+                {mistakes} {mistakes === 1 ? 'miss' : 'misses'}
+              </StatPill>
             </>
           }
         />
-        <View style={[gameStyles.body, board ? { flexDirection: 'row', padding: s(16), paddingTop: s(4), gap: s(16) } : { flexDirection: 'column' }]}>
-          <View style={[gameStyles.mapWrap, board ? { borderRadius: s(28) } : { marginHorizontal: 10, marginBottom: 10, borderRadius: 22 }]}>
-            <OceanBackdrop />
-            <View ref={frame.mapRef} style={gameStyles.mapInner} onLayout={frame.onMapLayout}>
-              {frame.scale > 0 && (
-                <>
-                  <MapCanvas
-                    data={map.data}
-                    view={view}
-                    scale={frame.scale}
-                    scores={boardScores}
-                    fills={fills}
-                    showBorders={mode === 'inline'}
-                    showInner={false}
+        <View style={[styles.tableWrap, { marginHorizontal: board ? s(16) : 10, borderRadius: board ? s(28) : 22 }]} onLayout={onTableLayout}>
+          <WoodTable />
+          {L.ready && (
+            <>
+              {/* the cardboard tray the picture goes into */}
+              <View style={[styles.tray, { left: L.frame.x - 8, top: L.frame.y - 8, width: L.frame.w + 16, height: L.frame.h + 16, borderRadius: 16 }]} />
+              <View style={{ position: 'absolute', left: L.frame.x, top: L.frame.y, width: L.frame.w, height: L.frame.h }}>
+                <BoardPicture pic={pic} jig={jig} scale={L.scale} placed={placed} ghost={ghost} finished={finished} />
+                <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: peek }]}>
+                  <Svg width={L.frame.w} height={L.frame.h} viewBox={`0 0 ${pic.width} ${pic.height}`}>
+                    <PictureContent pic={pic} />
+                  </Svg>
+                </Animated.View>
+                {hintPiece && <HintGlow piece={hintPiece} pic={pic} scale={L.scale} />}
+                {selected && (
+                  <Pressable
+                    accessibilityLabel="Place the selected piece here"
+                    onPress={onBoardPress}
+                    style={[StyleSheet.absoluteFill, Platform.OS === 'web' && ({ cursor: 'crosshair' } as object)]}
                   />
-                  {hintRegion && <RegionHighlight region={hintRegion} view={view} scale={frame.scale} inset={frame.inset} color={colors.sun} blink />}
-                  {nearRegion && !hintRegion && (
-                    <RegionHighlight region={nearRegion} view={view} scale={frame.scale} inset={frame.inset} color={colors.mint} blink={false} />
-                  )}
-                  {selected && (
-                    <Pressable
-                      accessibilityLabel="Place the selected piece here"
-                      onPress={onBoardPress}
-                      style={[StyleSheet.absoluteFill, Platform.OS === 'web' && ({ cursor: 'crosshair' } as object)]}
-                    />
-                  )}
-                </>
-              )}
-            </View>
-            <View style={[gameStyles.compass, { top: s(10), right: s(10) }]} pointerEvents="none">
-              <CompassRose size={s(board ? 58 : 42)} />
-            </View>
-          </View>
-          {panel}
-        </View>
+                )}
+              </View>
 
-        {dragging && frame.scale > 0 && (
-          <Animated.View pointerEvents="none" style={[styles.floating, { transform: pan.getTranslateTransform() }]}>
-            <View style={{ position: 'absolute', left: anchor.left, top: anchor.top }}>
-              <RegionShape
-                region={dragging}
-                scale={frame.scale}
-                inline={false}
-                fill={pieceColor(dragging.id).fill}
-                side={pieceColor(dragging.id).side}
-                stroke="#fff"
-                strokePx={1.6}
-                depthPx={5}
-                shadow
+              {drawOrder.map((id) => (
+                <LoosePiece key={id} piece={byId.get(id)!} jig={jig} pic={pic} scale={L.scale} a={getAnim(id)} selected={selected === id} handlers={handlers} />
+              ))}
+            </>
+          )}
+          {party && table.w > 0 && (
+            <Celebration key={party.n} kind={party.kind} origin={party.origin} width={table.w} height={table.h} caption={party.caption} trigger={party.n} />
+          )}
+          {finished && (
+            <View style={styles.resultsOverlay}>
+              <RoundResults
+                s={s}
+                board={board}
+                scores={scores}
+                names={[]}
+                points={points}
+                stars={stars}
+                newBest={newBest}
+                headline={{ label: 'Time', value: fmtTime(seconds), color: colors.ink }}
+                hideBreakdown
+                onAgain={restart}
+                onHome={() => router.replace('/')}
               />
             </View>
-          </Animated.View>
-        )}
+          )}
+        </View>
 
-        {party && frame.rootSize.w > 0 && (
-          <Celebration key={party.n} kind={party.kind} origin={party.origin} width={frame.rootSize.w} height={frame.rootSize.h} caption={party.caption} trigger={party.n} />
-        )}
+        {/* controls */}
+        <View style={[styles.controls, { paddingHorizontal: board ? s(16) : 10, gap: s(10) }]}>
+          <View style={[styles.box, { paddingHorizontal: s(12), paddingVertical: s(6), borderRadius: s(14) }]}>
+            <BoxIcon size={s(24)} />
+            <Text style={{ fontFamily: fonts.black, color: colors.ink, fontSize: s(14) }}>{inBox} in box</Text>
+          </View>
+          <Text numberOfLines={2} style={[styles.message, { fontSize: s(13), color: message?.tone === 'miss' ? '#B7413A' : colors.inkSoft }]}>
+            {message?.text ?? (selected ? 'Now tap where that piece goes on the board.' : 'Drag a piece onto the board — or tap it, then tap its spot.')}
+          </Text>
+          {!finished && <Button label="Peek" variant="soft" size={s(14)} onPress={doPeek} />}
+          {!finished && <Button label="Hint" variant="sun" size={s(14)} onPress={hint} />}
+        </View>
       </View>
     </SafeAreaView>
   );
 }
 
-type TrayProps = {
-  region: Region;
-  size: number;
-  inline: boolean;
+// ---- layout ----------------------------------------------------------------------
+
+function computeLayout(tw: number, th: number, jig: Jigsaw, board: boolean): Layout {
+  const empty: Layout = { ready: false, frame: { x: 0, y: 0, w: 0, h: 0 }, scale: 1, slotScale: 1, slots: [] };
+  if (tw < 50 || th < 50) return empty;
+  const pad = board ? 24 : 14;
+  const picW = jig.cellW * jig.cols;
+  const picH = jig.cellH * jig.rows;
+  const aspect = picW / picH;
+  let fw: number;
+  let fh: number;
+  if (board) {
+    fh = th - pad * 2;
+    fw = fh * aspect;
+    if (fw > tw * 0.58) {
+      fw = tw * 0.58;
+      fh = fw / aspect;
+    }
+  } else {
+    fw = tw - pad * 2;
+    fh = fw / aspect;
+    if (fh > th * 0.6) {
+      fh = th * 0.6;
+      fw = fh * aspect;
+    }
+  }
+  const frame = board ? { x: pad + 8, y: (th - fh) / 2, w: fw, h: fh } : { x: (tw - fw) / 2, y: pad, w: fw, h: fh };
+  // the free table area where loose pieces wait
+  const area = board
+    ? { x0: frame.x + fw + pad * 1.5, y0: pad, x1: tw - pad, y1: th - pad }
+    : { x0: pad, y0: frame.y + fh + pad, x1: tw - pad, y1: th - pad };
+  const scale = fw / picW;
+  const pw = (jig.cellW + jig.margin * 2) * scale;
+  const ph = (jig.cellH + jig.margin * 2) * scale;
+  // choose the grid that lets waiting pieces be as big as possible while fitting at least `want`
+  const want = board ? 6 : 3;
+  const aw = area.x1 - area.x0;
+  const ah = area.y1 - area.y0;
+  let best = { gcols: 1, grows: want, k: 0 };
+  for (let gc = 1; gc <= want; gc++) {
+    const gr = Math.ceil(want / gc);
+    const kk = Math.min(1, aw / gc / pw, ah / gr / ph) * 0.9;
+    if (kk > best.k) best = { gcols: gc, grows: gr, k: kk };
+  }
+  // if there is spare room, add more slots at the same size
+  const gcols = Math.max(best.gcols, Math.floor(aw / (pw * best.k * 1.02)));
+  const grows = Math.max(best.grows, Math.floor(ah / (ph * best.k * 1.02)));
+  const k = Math.max(0.3, best.k);
+  const n = Math.min(gcols * grows, 10);
+  const cw = aw / gcols;
+  const ch = ah / grows;
+  const jitter = (seed: number) => {
+    const v = Math.sin(seed * 12.9898) * 43758.5453;
+    return (v - Math.floor(v)) * 2 - 1;
+  };
+  const slots: Slot[] = [];
+  for (let i = 0; i < n; i++) {
+    const c = i % gcols;
+    const r = Math.floor(i / gcols);
+    slots.push({
+      x: area.x0 + cw * (c + 0.5) + jitter(i + 1) * cw * 0.08,
+      y: area.y0 + ch * (r + 0.5) + jitter(i + 7) * ch * 0.08,
+      rot: jitter(i + 3) * 10,
+    });
+  }
+  return { ready: true, frame, scale, slotScale: k, slots };
+}
+
+// ---- drawing ---------------------------------------------------------------------
+
+function useSvgId(prefix: string) {
+  return `${prefix}-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
+}
+
+/** Warm wooden tabletop with a soft grain. */
+const WoodTable = memo(function WoodTable() {
+  const id = useSvgId('wood');
+  return (
+    <View style={[StyleSheet.absoluteFill, { backgroundColor: '#E6BE87' }]} pointerEvents="none">
+      <Svg width="100%" height="100%">
+        <Defs>
+          <Pattern id={id} width="420" height="120" patternUnits="userSpaceOnUse">
+            <Path d="M0 20 C 100 12, 220 30, 420 18" stroke="#D9AC70" strokeWidth={2} fill="none" opacity={0.7} />
+            <Path d="M0 58 C 140 66, 260 48, 420 60" stroke="#DDB377" strokeWidth={1.5} fill="none" opacity={0.7} />
+            <Path d="M0 96 C 120 90, 300 104, 420 94" stroke="#D6A86B" strokeWidth={2} fill="none" opacity={0.6} />
+            <Path d="M180 70 c 12 -8 28 -8 40 0 c -12 8 -28 8 -40 0z" fill="none" stroke="#CF9F62" strokeWidth={1.5} opacity={0.6} />
+            <Rect x="0" y="118" width="420" height="2" fill="#D4A468" opacity={0.5} />
+          </Pattern>
+        </Defs>
+        <Rect x="0" y="0" width="100%" height="100%" fill={`url(#${id})`} />
+      </Svg>
+    </View>
+  );
+});
+
+/** Placed pieces (the picture clipped to their shapes), the faint guide and the seams. */
+const BoardPicture = memo(function BoardPicture({
+  pic,
+  jig,
+  scale,
+  placed,
+  ghost,
+  finished,
+}: {
+  pic: Picture;
+  jig: Jigsaw;
+  scale: number;
+  placed: Record<string, number>;
+  ghost: boolean;
+  finished: boolean;
+}) {
+  const clip = useSvgId('placed');
+  const shown = jig.pieces.filter((p) => placed[p.id] !== undefined);
+  return (
+    <Svg width={pic.width * scale} height={pic.height * scale} viewBox={`0 0 ${pic.width} ${pic.height}`}>
+      <Defs>
+        <ClipPath id={clip}>
+          {shown.map((p) => (
+            <Path key={p.id} d={p.path} />
+          ))}
+        </ClipPath>
+      </Defs>
+      <Rect x={0} y={0} width={pic.width} height={pic.height} fill="#F3E4CB" />
+      {ghost && (
+        <G opacity={0.22}>
+          <PictureContent pic={pic} labels={false} />
+        </G>
+      )}
+      {/* empty spots: faint cut lines so students can see the shapes to fill */}
+      {jig.pieces.map((p) =>
+        placed[p.id] === undefined ? (
+          <Path key={p.id} d={p.path} fill="none" stroke="#C9AE86" strokeWidth={1.6 / scale} strokeDasharray={`${5 / scale} ${4 / scale}`} />
+        ) : null,
+      )}
+      {shown.length > 0 && (
+        <G clipPath={`url(#${clip})`}>
+          <PictureContent pic={pic} />
+        </G>
+      )}
+      {!finished && shown.map((p) => <Path key={`s-${p.id}`} d={p.path} fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth={1.2 / scale} />)}
+    </Svg>
+  );
+});
+
+/** One loose cardboard piece: picture clipped to the knobbed outline, with thickness and shadow. */
+const PieceSvg = memo(function PieceSvg({ piece, jig, pic, scale, selected }: { piece: Piece; jig: Jigsaw; pic: Picture; scale: number; selected: boolean }) {
+  const clip = useSvgId('pc');
+  const m = jig.margin;
+  const box = { x: piece.x - m, y: piece.y - m, w: piece.w + 2 * m, h: piece.h + 2 * m };
+  const px = (n: number) => n / scale;
+  return (
+    <Svg width={box.w * scale} height={box.h * scale} viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}>
+      <Defs>
+        <ClipPath id={clip}>
+          <Path d={piece.path} />
+        </ClipPath>
+      </Defs>
+      {/* shadow and cardboard edge */}
+      <Path d={piece.path} transform={`translate(${px(4)} ${px(8)})`} fill="rgba(70,40,10,0.28)" />
+      <Path d={piece.path} transform={`translate(0 ${px(3.5)})`} fill="#C9A877" />
+      <G clipPath={`url(#${clip})`}>
+        <PictureContent pic={pic} box={box} />
+      </G>
+      <Path d={piece.path} fill="none" stroke={selected ? colors.primary : 'rgba(255,255,255,0.85)'} strokeWidth={px(selected ? 3.5 : 1.6)} strokeLinejoin="round" />
+    </Svg>
+  );
+});
+
+function LoosePiece({
+  piece,
+  jig,
+  pic,
+  scale,
+  a,
+  selected,
+  handlers,
+}: {
+  piece: Piece;
+  jig: Jigsaw;
+  pic: Picture;
+  scale: number;
+  a: Anim;
   selected: boolean;
-  hidden: boolean;
-  onStart: (r: Region, pageX: number, pageY: number, tileCenter: { x: number; y: number }) => void;
-  onMove: (r: Region, pageX: number, pageY: number) => void;
-  onEnd: (r: Region, pageX: number, pageY: number) => void;
-  onTap: (r: Region) => void;
-};
-
-/** A chunky 3D puzzle piece in the tray. Drag it, or tap to select. */
-function TrayPiece({ region, size, inline, selected, hidden, onStart, onMove, onEnd, onTap }: TrayProps) {
-  const ref = useRef<ComponentRef<typeof View>>(null);
-  const cb = useRef({ onStart, onMove, onEnd, onTap, region });
-  cb.current = { onStart, onMove, onEnd, onTap, region };
-  const center = useRef({ x: 0, y: 0 });
+  handlers: React.MutableRefObject<Handlers>;
+}) {
+  const w = (piece.w + jig.margin * 2) * scale;
+  const h = (piece.h + jig.margin * 2) * scale;
   const moved = useRef(false);
-
-  // little "pop in" when a new piece arrives in the tray
-  const pop = useRef(new Animated.Value(0.6)).current;
-  useEffect(() => {
-    Animated.spring(pop, { toValue: 1, friction: 4, tension: 140, useNativeDriver: NATIVE }).start();
-  }, [pop]);
-  const lift = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(lift, { toValue: selected ? 1 : 0, duration: 160, easing: Easing.out(Easing.quad), useNativeDriver: NATIVE }).start();
-  }, [selected, lift]);
-
   const responder = useMemo(
     () =>
       PanResponder.create({
@@ -386,60 +573,102 @@ function TrayPiece({ region, size, inline, selected, hidden, onStart, onMove, on
         onPanResponderTerminationRequest: () => false,
         onPanResponderGrant: () => {
           moved.current = false;
-          ref.current?.measureInWindow((x, y, w, h) => (center.current = { x: x + w / 2, y: y + h / 2 }));
+          handlers.current.grant(piece.id);
         },
         onPanResponderMove: (_e, g) => {
-          if (!moved.current && Math.hypot(g.dx, g.dy) > 6) {
-            moved.current = true;
-            cb.current.onStart(cb.current.region, g.moveX, g.moveY, center.current);
-          }
-          if (moved.current) cb.current.onMove(cb.current.region, g.moveX, g.moveY);
+          if (Math.hypot(g.dx, g.dy) > 6) moved.current = true;
+          handlers.current.move(piece.id, g.dx, g.dy);
         },
-        onPanResponderRelease: (_e, g) => {
-          if (moved.current) cb.current.onEnd(cb.current.region, g.moveX, g.moveY);
-          else cb.current.onTap(cb.current.region);
-        },
-        onPanResponderTerminate: (_e, g) => {
-          if (moved.current) cb.current.onEnd(cb.current.region, g.moveX, g.moveY);
-        },
+        onPanResponderRelease: (_e, g) => handlers.current.release(piece.id, g.dx, g.dy, !moved.current),
+        onPanResponderTerminate: (_e, g) => handlers.current.release(piece.id, g.dx, g.dy, !moved.current),
       }),
-    [],
+    [piece.id, handlers],
   );
-
-  const c = pieceColor(region.id);
-  const inner = size - 22;
   return (
     <Animated.View
-      ref={ref}
       {...responder.panHandlers}
       accessibilityRole="button"
-      accessibilityLabel={`${region.name} puzzle piece`}
-      accessibilityState={{ selected }}
+      accessibilityLabel={`Jigsaw piece row ${piece.row + 1}, column ${piece.col + 1}`}
       style={[
-        styles.tile,
+        { position: 'absolute', left: 0, top: 0, width: w, height: h },
         {
-          width: size,
-          height: size,
-          borderRadius: size * 0.2,
-          opacity: hidden ? 0.15 : 1,
-          borderColor: selected ? colors.primary : colors.line,
-          borderBottomColor: selected ? colors.primaryDark : colors.surfaceLip,
-          backgroundColor: selected ? colors.primarySoft : colors.surface,
-          transform: [{ scale: pop }, { translateY: lift.interpolate({ inputRange: [0, 1], outputRange: [0, -5] }) }],
+          transform: [
+            { translateX: Animated.subtract(a.pos.x, w / 2) },
+            { translateY: Animated.subtract(a.pos.y, h / 2) },
+            { rotate: a.rot.interpolate({ inputRange: [-360, 360], outputRange: ['-360deg', '360deg'] }) },
+            { scale: a.sc },
+          ],
         },
         Platform.OS === 'web' && ({ cursor: 'grab', touchAction: 'none', userSelect: 'none' } as object),
       ]}
     >
-      <View pointerEvents="none" style={{ alignItems: 'center' }}>
-        <RegionShape region={region} scale={fitScale(region, inner)} inline={inline} fill={c.fill} side={c.side} stroke="#fff" strokePx={1.6} depthPx={4} />
+      <View pointerEvents="none">
+        <PieceSvg piece={piece} jig={jig} pic={pic} scale={scale} selected={selected} />
       </View>
     </Animated.View>
   );
 }
 
+/** Blinking outline on the board showing where a piece belongs. */
+function HintGlow({ piece, pic, scale }: { piece: Piece; pic: Picture; scale: number }) {
+  const v = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(v, { toValue: 0.25, duration: 450, easing: Easing.inOut(Easing.quad), useNativeDriver: NATIVE }),
+        Animated.timing(v, { toValue: 1, duration: 450, easing: Easing.inOut(Easing.quad), useNativeDriver: NATIVE }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [v]);
+  return (
+    <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: v }]}>
+      <Svg width={pic.width * scale} height={pic.height * scale} viewBox={`0 0 ${pic.width} ${pic.height}`}>
+        <Path d={piece.path} fill="rgba(255,200,61,0.45)" stroke={colors.sun} strokeWidth={4 / scale} strokeLinejoin="round" />
+      </Svg>
+    </Animated.View>
+  );
+}
+
+function BoxIcon({ size }: { size: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M3 8l9-4 9 4v9l-9 4-9-4z" fill="#E8C48E" stroke="#B88A4E" strokeWidth={1.4} strokeLinejoin="round" />
+      <Path d="M3 8l9 4 9-4M12 12v9" fill="none" stroke="#B88A4E" strokeWidth={1.4} strokeLinejoin="round" />
+      <Path d="M7.5 6l9 4" stroke="#B88A4E" strokeWidth={1.2} />
+    </Svg>
+  );
+}
+
 const styles = StyleSheet.create({
-  tray: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' },
-  tile: { alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderBottomWidth: 6 },
-  message: { fontFamily: fonts.bodyBold, textAlign: 'center', lineHeight: 18 },
-  floating: { position: 'absolute', left: 0, top: 0, width: 0, height: 0, overflow: 'visible' },
+  tableWrap: {
+    flex: 1,
+    overflow: 'hidden',
+    borderWidth: 3,
+    borderColor: '#F1D6AE',
+    borderBottomWidth: 8,
+    borderBottomColor: '#B88A4E',
+  },
+  tray: {
+    position: 'absolute',
+    backgroundColor: '#F7EBD8',
+    borderWidth: 3,
+    borderColor: '#E7D2B0',
+    borderBottomWidth: 6,
+    borderBottomColor: '#CDAE80',
+  },
+  resultsOverlay: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(34,24,74,0.25)', alignItems: 'center', justifyContent: 'center', padding: 16 },
+  controls: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10 },
+  box: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.surface,
+    borderWidth: 2,
+    borderColor: colors.line,
+    borderBottomWidth: 4,
+    borderBottomColor: colors.surfaceLip,
+  },
+  message: { flex: 1, fontFamily: fonts.bodyBold, lineHeight: 18 },
 });
