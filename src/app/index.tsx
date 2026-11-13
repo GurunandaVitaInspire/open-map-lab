@@ -1,6 +1,6 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Image, Linking, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Image, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { Clouds, WaveBand } from '../components/Backdrops';
@@ -19,7 +19,6 @@ import { playSfx } from '../lib/sound';
 import { colors, fonts, useLayoutMode } from '../theme';
 
 const NATIVE = Platform.OS !== 'web';
-const REPO = 'https://github.com/GurunandaVitaInspire/open-map-lab';
 
 type QuestKey = 'india' | 'quiz' | 'jigsaw' | 'world';
 type Quest = {
@@ -182,7 +181,6 @@ export default function Home() {
               <FadeIn delay={780}>
                 <View style={{ flexDirection: 'row', gap: s(10), flexWrap: 'wrap', justifyContent: 'center' }}>
                   <Button label="Start playing" variant="primary" size={s(18)} onPress={() => openQuest('india')} />
-                  <Button label="Open source ↗" variant="soft" size={s(16)} onPress={() => Linking.openURL(REPO)} />
                 </View>
               </FadeIn>
             </View>
