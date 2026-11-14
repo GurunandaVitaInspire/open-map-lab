@@ -13,6 +13,7 @@ import { INDIA } from '../../data/maps';
 import { puzzleScore, shuffle } from '../../lib/game';
 import { PUZZLE_SIZES, makeJigsaw, type Jigsaw, type Piece } from '../../lib/jigsaw';
 import { saveBest } from '../../lib/progress';
+import { GPU_LAYER, LIFT_SHADOW, SPRING, haptic, makeLean } from '../../lib/feel';
 import { playSfx } from '../../lib/sound';
 import { colors, fonts, rate, useLayoutMode } from '../../theme';
 
@@ -29,7 +30,7 @@ type Layout = {
 type Anim = { pos: Animated.ValueXY; rot: Animated.Value; sc: Animated.Value; scNow: number };
 type Handlers = {
   grant: (id: string) => void;
-  move: (id: string, dx: number, dy: number) => void;
+  move: (id: string, dx: number, dy: number, vx: number) => void;
   release: (id: string, dx: number, dy: number, tap: boolean) => void;
 };
 
@@ -60,6 +61,7 @@ export default function PuzzleGame() {
   const [misses, setMisses] = useState<Record<string, number>>({});
   const [selected, setSelected] = useState<string | null>(null);
   const [top, setTop] = useState<string | null>(null);
+  const [held, setHeld] = useState<string | null>(null);
   const [hintId, setHintId] = useState<string | null>(null);
   const [hints, setHints] = useState(0);
   const [peeks, setPeeks] = useState(0);
@@ -160,9 +162,9 @@ export default function PuzzleGame() {
     if (i < 0) return;
     const slot = L.slots[i];
     Animated.parallel([
-      Animated.spring(a.pos, { toValue: { x: slot.x, y: slot.y }, useNativeDriver: false, friction: 7, tension: 70 }),
-      Animated.spring(a.rot, { toValue: slot.rot, useNativeDriver: false }),
-      Animated.spring(a.sc, { toValue: L.slotScale, useNativeDriver: false }),
+      Animated.spring(a.pos, { toValue: { x: slot.x, y: slot.y }, ...SPRING.home }),
+      Animated.spring(a.rot, { toValue: slot.rot, ...SPRING.settle }),
+      Animated.spring(a.sc, { toValue: L.slotScale, ...SPRING.settle }),
     ]).start();
   };
 
@@ -172,6 +174,9 @@ export default function PuzzleGame() {
     const t = target(p);
     playSfx('snap');
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    a.pos.stopAnimation();
+    a.rot.stopAnimation();
+    a.sc.stopAnimation();
     setSelected(null);
     setHintId(null);
     // a quick, decisive snap (a spring here takes ~0.6 s to settle and feels laggy)
@@ -196,29 +201,43 @@ export default function PuzzleGame() {
   };
 
   // drag callbacks, kept fresh through a ref so each piece's PanResponder is created once
+  // iOS-style feel: the piece lifts the instant it is touched, follows the finger 1:1, leans into
+  // fast moves, and drops back with a short spring (see lib/feel.ts)
   const dragStart = useRef({ x: 0, y: 0 });
+  const lean = useRef<ReturnType<typeof makeLean> | null>(null);
+  const pickedUp = useRef(false);
   const handlers = useRef<Handlers>({ grant: () => {}, move: () => {}, release: () => {} });
   handlers.current.grant = (id) => {
     const a = getAnim(id);
     a.pos.stopAnimation((v) => (dragStart.current = v));
+    a.sc.stopAnimation();
+    a.rot.stopAnimation();
+    lean.current = makeLean(a.rot, 7);
+    pickedUp.current = false;
     setTop(id);
+    setHeld(id);
+    Animated.parallel([
+      Animated.spring(a.sc, { toValue: 1.06, ...SPRING.pop }),
+      Animated.spring(a.rot, { toValue: 0, ...SPRING.settle }),
+    ]).start();
+    haptic.pick();
   };
-  handlers.current.move = (id, dx, dy) => {
+  handlers.current.move = (id, dx, dy, vx) => {
     const a = getAnim(id);
-    if (Math.hypot(dx, dy) > 6 && a.scNow < 1) {
-      a.scNow = 1; // only trigger the pick-up once
+    if (!pickedUp.current && Math.hypot(dx, dy) > 6) {
+      pickedUp.current = true; // only play the pick-up sound once, when it really moves
       playSfx('pickup');
-      Animated.parallel([
-        Animated.spring(a.sc, { toValue: 1.04, useNativeDriver: false, friction: 6 }),
-        Animated.spring(a.rot, { toValue: 0, useNativeDriver: false }),
-      ]).start();
     }
     a.pos.setValue({ x: dragStart.current.x + dx, y: dragStart.current.y + dy });
+    if (pickedUp.current) lean.current?.move(vx);
   };
   handlers.current.release = (id, dx, dy, tap) => {
+    lean.current?.reset();
+    setHeld(null);
     if (tap) {
       playSfx('tap');
       setSelected((cur) => (cur === id ? null : id));
+      backToSlot(id); // set it back down in its spot on the table
       return;
     }
     const p = byId.get(id)!;
@@ -290,8 +309,6 @@ export default function PuzzleGame() {
 
   const hintPiece = hintId ? byId.get(hintId) : undefined;
   const loose = slotPieces.filter((x): x is string => !!x);
-  // the piece being moved is drawn last so it floats above the others
-  const drawOrder = [...loose.filter((id) => id !== top), ...loose.filter((id) => id === top)];
 
   return (
     <SafeAreaView style={gameStyles.safe} edges={['top', 'bottom', 'left', 'right']}>
@@ -336,8 +353,21 @@ export default function PuzzleGame() {
                 )}
               </View>
 
-              {drawOrder.map((id) => (
-                <LoosePiece key={id} piece={byId.get(id)!} jig={jig} pic={pic} scale={L.scale} a={getAnim(id)} selected={selected === id} handlers={handlers} />
+              {/* stable order; the last-touched piece is raised with zIndex (moving it in the
+                  page would force the browser to redraw its picture mid-drag) */}
+              {loose.map((id) => (
+                <LoosePiece
+                  key={id}
+                  piece={byId.get(id)!}
+                  jig={jig}
+                  pic={pic}
+                  scale={L.scale}
+                  a={getAnim(id)}
+                  selected={selected === id}
+                  raised={top === id}
+                  lifted={held === id}
+                  handlers={handlers}
+                />
               ))}
             </>
           )}
@@ -555,6 +585,8 @@ function LoosePiece({
   scale,
   a,
   selected,
+  raised,
+  lifted,
   handlers,
 }: {
   piece: Piece;
@@ -563,6 +595,8 @@ function LoosePiece({
   scale: number;
   a: Anim;
   selected: boolean;
+  raised: boolean;
+  lifted: boolean;
   handlers: React.MutableRefObject<Handlers>;
 }) {
   const w = (piece.w + jig.margin * 2) * scale;
@@ -580,7 +614,7 @@ function LoosePiece({
         },
         onPanResponderMove: (_e, g) => {
           if (Math.hypot(g.dx, g.dy) > 6) moved.current = true;
-          handlers.current.move(piece.id, g.dx, g.dy);
+          handlers.current.move(piece.id, g.dx, g.dy, g.vx);
         },
         onPanResponderRelease: (_e, g) => handlers.current.release(piece.id, g.dx, g.dy, !moved.current),
         onPanResponderTerminate: (_e, g) => handlers.current.release(piece.id, g.dx, g.dy, !moved.current),
@@ -593,7 +627,8 @@ function LoosePiece({
       accessibilityRole="button"
       accessibilityLabel={`Jigsaw piece row ${piece.row + 1}, column ${piece.col + 1}`}
       style={[
-        { position: 'absolute', left: 0, top: 0, width: w, height: h },
+        { position: 'absolute', left: 0, top: 0, width: w, height: h, zIndex: raised ? 2 : 1 },
+        GPU_LAYER,
         {
           transform: [
             { translateX: Animated.subtract(a.pos.x, w / 2) },
@@ -605,7 +640,7 @@ function LoosePiece({
         Platform.OS === 'web' && ({ cursor: 'grab', touchAction: 'none', userSelect: 'none' } as object),
       ]}
     >
-      <View pointerEvents="none">
+      <View pointerEvents="none" style={lifted ? LIFT_SHADOW : null}>
         <PieceSvg piece={piece} jig={jig} pic={pic} scale={scale} selected={selected} />
       </View>
     </Animated.View>

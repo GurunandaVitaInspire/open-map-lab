@@ -2,11 +2,12 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Image, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
-import { Clouds, WaveBand } from '../components/Backdrops';
+import Svg, { Defs, LinearGradient, Path, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { GameArt, type ArtKind } from '../components/GameArt';
 import { SoundButtons } from '../components/GameUI';
 import { HangingCards, type HangingItem } from '../components/home/HangingCards';
+import { RealSea } from '../components/home/RealSea';
+import { SideScenes, SkyClouds } from '../components/home/Sky';
 import { Looping } from '../components/Looping';
 import { SetupSheet, type ChoiceGroup } from '../components/home/SetupSheet';
 import { MotionIcon, StarIcon } from '../components/icons';
@@ -68,6 +69,10 @@ export default function Home() {
   const quest = QUESTS.find((q) => q.key === open) ?? QUESTS[0];
   // On big screens size the cards so both ropes (all six games) fit in the first screen.
   const cardW = Math.max(s(150), Math.min(s(250), ((height - s(215)) / 2 - s(80)) / 0.98));
+  // the empty margin on each side of a rope of three cards (same maths as HangingCards)
+  const rowCardW = Math.min(cardW, (width - s(30) * 2 - s(26) * 2) / 3);
+  const sideW = (width - (rowCardW * 3 + s(26) * 2)) / 2;
+  const [ropesH, setRopesH] = useState(0);
   const items: HangingItem[] = QUESTS.map((q) => ({
     key: q.key,
     title: q.title,
@@ -186,7 +191,7 @@ export default function Home() {
           {/* ---- hero ---- */}
           <View>
             <HeroBackground />
-            <Clouds count={board ? 3 : 2} />
+            <SkyClouds board={board} />
             <NavBar s={s} board={board} />
             <View style={[styles.hero, { paddingHorizontal: s(20), paddingTop: s(board ? 4 : 8), gap: s(10) }]}>
               <Headline s={s} board={board} width={width} />
@@ -199,7 +204,9 @@ export default function Home() {
                 </View>
               </FadeIn>
             </View>
-            {/* two ropes of three games each, so all six are visible at once on big screens */}
+            {/* two ropes of three games each, so all six are visible at once on big screens;
+                the real Earth and hot-air balloons fill the empty margins beside them */}
+            <View onLayout={(e) => setRopesH(e.nativeEvent.layout.height)}>
             {[items.slice(0, 3), items.slice(3, 6)].map((row, r) => (
               <View key={r} style={{ marginTop: r === 0 ? s(board ? 6 : 8) : board ? -s(6) : 4 }}>
                 <HangingCards
@@ -216,18 +223,34 @@ export default function Home() {
                 />
               </View>
             ))}
+            {/* in front of the ropes (like the cards), but only in the empty margins */}
+            {board && <SideScenes side={sideW} height={ropesH} s={s} />}
+            </View>
           </View>
 
-          {/* ---- the sea ---- */}
-          <View style={{ backgroundColor: colors.bg }}>
-            <WaveBand boat height={board ? 140 : 110} />
-          </View>
-          <View style={[styles.sea, { paddingVertical: s(22), gap: s(18), flexGrow: 1 }]}>
-            <Ticker s={s} />
-            <Text style={[styles.footer, { fontSize: s(12), paddingHorizontal: s(20) }]}>
-              Map data: Natural Earth (public domain) · India states & districts: udit-001/india-maps-data{'\n'}
-              Sounds & music: Kenney and TinyWorlds (CC0) · Made with care by VitaInspire
-            </Text>
+          {/* ---- the sea: real ocean footage, fading out of the sky's haze ---- */}
+          <View style={{ flexGrow: 1, backgroundColor: '#0E5C6E' }}>
+            <RealSea height={board ? s(290) : 250}>
+              <Svg width="100%" height="100%" style={StyleSheet.absoluteFill} pointerEvents="none">
+                <Defs>
+                  <LinearGradient id="sea-haze" x1="0" y1="0" x2="0" y2="1">
+                    <Stop offset="0" stopColor="#F2F9FF" stopOpacity={1} />
+                    <Stop offset="0.16" stopColor="#E3F2FB" stopOpacity={0.55} />
+                    <Stop offset="0.42" stopColor="#E3F2FB" stopOpacity={0} />
+                    <Stop offset="0.7" stopColor="#06303D" stopOpacity={0} />
+                    <Stop offset="1" stopColor="#06303D" stopOpacity={0.55} />
+                  </LinearGradient>
+                </Defs>
+                <Rect x="0" y="0" width="100%" height="100%" fill="url(#sea-haze)" />
+              </Svg>
+              <View style={{ flex: 1, justifyContent: 'flex-end', paddingVertical: s(22), gap: s(16) }}>
+                <Ticker s={s} />
+                <Text style={[styles.footer, { fontSize: s(12), paddingHorizontal: s(20) }]}>
+                  Map data: Natural Earth (public domain) · India states & districts: udit-001/india-maps-data{'\n'}
+                  Sounds & music: Kenney and TinyWorlds (CC0) · Earth: NASA · Sea, clouds & balloon: CC0 · Made with care by VitaInspire
+                </Text>
+              </View>
+            </RealSea>
           </View>
         </ScrollView>
 
@@ -279,18 +302,26 @@ function NavBar({ s, board }: { s: (n: number) => number; board: boolean }) {
   );
 }
 
+/** A bright morning sky: deep blue at the top fading to a hazy horizon, with soft sunlight. */
 function HeroBackground() {
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
       <Svg width="100%" height="100%">
         <Defs>
-          <LinearGradient id="hero-bg" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0" stopColor="#FFF6EA" />
-            <Stop offset="0.55" stopColor="#F8F1FF" />
-            <Stop offset="1" stopColor={colors.bg} />
+          <LinearGradient id="hero-sky" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor="#5FB2EE" />
+            <Stop offset="0.38" stopColor="#A9D8F7" />
+            <Stop offset="0.72" stopColor="#DDF0FC" />
+            <Stop offset="1" stopColor="#F2F9FF" />
           </LinearGradient>
+          <RadialGradient id="hero-sun" cx="82%" cy="4%" r="55%">
+            <Stop offset="0" stopColor="#FFF7D6" stopOpacity={0.95} />
+            <Stop offset="0.25" stopColor="#FFF1C4" stopOpacity={0.45} />
+            <Stop offset="1" stopColor="#FFF1C4" stopOpacity={0} />
+          </RadialGradient>
         </Defs>
-        <Rect x="0" y="0" width="100%" height="100%" fill="url(#hero-bg)" />
+        <Rect x="0" y="0" width="100%" height="100%" fill="url(#hero-sky)" />
+        <Rect x="0" y="0" width="100%" height="100%" fill="url(#hero-sun)" />
       </Svg>
     </View>
   );
@@ -409,7 +440,7 @@ function Ticker({ s }: { s: (n: number) => number }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#FFF6EA' },
+  safe: { flex: 1, backgroundColor: '#5FB2EE' },
   nav: { flexDirection: 'row', alignItems: 'center' },
   logo: {
     backgroundColor: colors.surface,
@@ -421,7 +452,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.surfaceLip,
   },
   brand: { fontFamily: fonts.display, color: colors.ink, lineHeight: 26 },
-  byline: { fontFamily: fonts.bodyBold, color: '#1F5C8F' },
+  byline: { fontFamily: fonts.bodyBold, color: '#173A63' },
   hero: { alignItems: 'center' },
   badge: {
     flexDirection: 'row',
@@ -434,11 +465,10 @@ const styles = StyleSheet.create({
   },
   badgeText: { fontFamily: fonts.bodyBold, color: colors.ink },
   headline: { fontFamily: fonts.display, letterSpacing: -1, textAlign: 'center' },
-  sub: { fontFamily: fonts.body, color: colors.inkSoft, textAlign: 'center', lineHeight: 24 },
+  sub: { fontFamily: fonts.bodyBold, color: '#33405F', textAlign: 'center', lineHeight: 24 },
   subRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' },
   subCol: { alignItems: 'center' },
-  sea: { backgroundColor: '#4FA8DB' },
   tick: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.18)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.35)' },
   tickText: { fontFamily: fonts.bodyBold, color: '#FFFFFF' },
-  footer: { fontFamily: fonts.body, color: 'rgba(255,255,255,0.9)', textAlign: 'center', lineHeight: 18 },
+  footer: { fontFamily: fonts.body, color: 'rgba(255,255,255,0.92)', textAlign: 'center', lineHeight: 18, textShadowColor: 'rgba(0,0,0,0.35)', textShadowRadius: 4 },
 });

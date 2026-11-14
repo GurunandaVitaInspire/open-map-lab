@@ -17,7 +17,9 @@ Six games, picked from the home screen:
 | **Name the Country** | World (~186 countries, continent zoom) | One country blinks on the world map (tiny countries get a ring); pick its name from four options, mostly its neighbours. Same retry scoring and hints (continent, neighbours) as Name the State. |
 | **World Explorer** | World (~186 countries, continent zoom) | Drag countries onto the world map, scored like Drag the State. |
 
-**Landing page:** a compact "Your Map Adventure Starts Now!" headline that reveals word by word, then all six game cards hanging from two ropes like polaroids (they drop in with a swing, sway gently and kick when tapped), drifting clouds, and a moving sea with layered waves, a bobbing paper boat and a scrolling feature ticker. Tapping a card opens a setup sheet with that game's options. A **pause-motion** button stops all ambient animation (it is also off when the device asks for reduced motion).
+**Landing page:** a realistic morning sky. A compact "Your Map Adventure Starts Now!" headline reveals word by word, then all six game cards hang from two ropes like polaroids (they drop in with a swing, sway gently and kick when tapped). Photo-real clouds drift across the sky at different depths; on wide screens a real **spinning Earth** (NASA Blue Marble with moving clouds, sunlight and a glowing atmosphere) floats in the left margin and real **hot-air balloons** rise and sway on the right. At the bottom, **real sea footage** (a seamless loop, loaded only after the page itself) meets the sky in a hazy horizon, with a scrolling feature ticker. Tapping a card opens a setup sheet with that game's options. A **pause-motion** button stops all ambient animation and the sea video (it is also off when the device asks for reduced motion).
+
+**Drag feel (iOS-style):** pieces lift the instant you touch them, glide from the tray to under your finger while resizing to the map, follow the finger 1:1 (no re-rendering while moving, each piece on its own GPU layer), lean slightly into fast moves, and land with short, critically damped springs: close drops glide into their exact spot, misses settle where they fell, and pieces dropped off the map fly back to the tray. Light haptics on phones. See `src/lib/feel.ts`.
 
 **Game feel:** a 3D map slab on a gently moving, wave-patterned ocean, chunky pressable buttons, the Baloo 2 and Nunito fonts, stars, streaks and points, and best scores saved on the device (no account).
 - 100% / first try: a firework blast from the region, a flash, confetti rain and a PERFECT badge (plus a haptic buzz on phones)
@@ -66,6 +68,10 @@ src/app/              Expo Router screens (index = landing page, play/ = Drag th
 src/components/       MapCanvas (base map), RegionShape (piece), GameUI (shared header/results), Celebration, ui
 src/lib/sound.ts      Sound effects and music (expo-audio)
 src/lib/motion.ts     Pause-motion / reduced-motion setting
+src/lib/feel.ts       Shared drag physics (springs, lean, haptics, GPU layers)
+src/components/home/  Landing page pieces: HangingCards, Sky (clouds, balloons), Globe, RealSea
+assets/scene/         Landing imagery: Earth, clouds, balloon (public domain / CC0, see CREDITS.md)
+public/scene/         Sea video loop (WebM + MP4) served as static files on the web
 src/components/Looping.tsx  GPU-friendly looping animation (CSS on web, native driver on apps)
 assets/fonts/         Subset Baloo 2 and Nunito fonts (OFL)
 src/lib/jigsaw.ts     Jigsaw cutter (knobbed piece outlines)
@@ -95,6 +101,8 @@ npm run build:maps
 3. Register it in `src/data/maps.ts`.
 
 ## Data sources & licences
+
+- **Landing-page scene:** NASA Blue Marble Earth (public domain), Natural Earth III clouds (public domain), and CC0 sea footage, clouds and balloon from Wikimedia Commons and OpenGameArt. Details: [assets/scene/CREDITS.md](assets/scene/CREDITS.md).
 
 - **World:** [Natural Earth](https://www.naturalearthdata.com/) 1:10m Admin 0 countries, *India point-of-view* edition, so India's borders on the world map match the India map. Public domain.
 - **Rivers:** Natural Earth 1:10m rivers and lake centrelines, clipped to India (`src/data/generated/india-rivers.json`). Public domain. The 7 MB raw file is not committed; download it with the command above.

@@ -15,6 +15,7 @@ import { Button, Card, Label, Pill } from '../../components/ui';
 import { getView, useMap, type MapDefinition, type Region } from '../../data/maps';
 import { buildQuestions, cheer, measurePlacement, placementTip, pointsFor, type DiagramMode, type Placement } from '../../lib/game';
 import { saveBest } from '../../lib/progress';
+import { GPU_LAYER, LIFT_SHADOW, SPRING, haptic, makeLean, tiltDeg } from '../../lib/feel';
 import { playSfx } from '../../lib/sound';
 import { colors, fonts, rate, useLayoutMode } from '../../theme';
 
@@ -171,20 +172,66 @@ function PlayGame({ map }: { map: MapDefinition }) {
   const live = useRef({ locked: false });
   live.current.locked = (reviewing && !needsFix) || finished || !current;
 
-  const pan = useRef(new Animated.ValueXY()).current;
+  // iOS-style drag: the piece lifts the moment it is touched, glides from the tray to under the
+  // finger while shrinking/growing to the map's size, follows the finger 1:1 (no React renders
+  // while moving), leans into fast moves, then glides into place or settles where it was dropped.
+  const pan = useRef(new Animated.ValueXY()).current; // finger position (root coordinates)
+  const grab = useRef(new Animated.ValueXY()).current; // eases the piece from the tray to the finger
+  const size = useRef(new Animated.Value(1)).current; // piece scale relative to the map
+  const tilt = useRef(new Animated.Value(0)).current; // degrees
+  const show = useRef(new Animated.Value(0)).current; // floating piece opacity
+  const lean = useMemo(() => makeLean(tilt), [tilt]);
   // On touch devices lift the piece above the finger so it stays visible.
   const lift = Platform.OS === 'web' ? 0 : 56;
+  const cardBox = board ? s(190) : 96;
+  const pieceScale = current ? fitScale(current, cardBox) : 1;
+  // the tray shows the piece bigger or smaller than on the map; start the lift from that size
+  const trayRatio = scale > 0 ? Math.max(0.55, Math.min(2.2, pieceScale / scale)) : 1;
+  const geo = useRef({ trayRatio, lift });
+  geo.current = { trayRatio, lift };
 
-  const returnPiece = () => {
+  const fadeOut = () => Animated.timing(show, { toValue: 0, duration: 150, easing: Easing.out(Easing.quad), useNativeDriver: false }).start();
+
+  /** Fly the piece back into the tray (dropped off the map, or just tapped). */
+  const returnPiece = (sound = true) => {
     const { card, root } = origin.current;
-    Animated.spring(pan, {
-      toValue: { x: card.x - root.x, y: card.y - root.y + lift },
-      useNativeDriver: false,
-      speed: 18,
-      bounciness: 6,
-    }).start(() => setDragging(false));
-    playSfx('drop');
+    lean.reset();
+    Animated.parallel([
+      Animated.spring(pan, { toValue: { x: card.x - root.x, y: card.y - root.y + lift }, ...SPRING.home }),
+      Animated.spring(grab, { toValue: { x: 0, y: 0 }, ...SPRING.home }),
+      Animated.spring(size, { toValue: trayRatio, ...SPRING.home }),
+      Animated.spring(tilt, { toValue: 0, ...SPRING.settle }),
+    ]).start(({ finished }) => {
+      if (!finished) return; // picked up again mid-flight
+      show.setValue(0);
+      setDragging(false);
+    });
+    if (sound) playSfx('drop');
   };
+
+  /** Glide the piece into the region's real position, then hand over to the map. */
+  const snapTo = (r: Region) => {
+    const at = toRoot(r.cx, r.cy);
+    lean.reset();
+    haptic.snap();
+    Animated.parallel([
+      Animated.spring(pan, { toValue: { x: at.x, y: at.y + lift }, ...SPRING.snap }),
+      Animated.spring(grab, { toValue: { x: 0, y: 0 }, ...SPRING.snap }),
+      Animated.spring(size, { toValue: 1, ...SPRING.snap }),
+      Animated.spring(tilt, { toValue: 0, ...SPRING.settle }),
+    ]).start(({ finished }) => finished && fadeOut());
+  };
+
+  /** Set the piece down where it was dropped (a miss), then hand over to the map. */
+  const settle = () => {
+    lean.reset();
+    Animated.parallel([
+      Animated.spring(size, { toValue: 1, ...SPRING.settle }),
+      Animated.spring(tilt, { toValue: 0, ...SPRING.settle }),
+    ]).start(({ finished }) => finished && fadeOut());
+  };
+  const returnRef = useRef(returnPiece);
+  returnRef.current = returnPiece;
 
   const record = (region: Region, placement: Placement | null, dx: number, dy: number) => {
     const acc = placement?.accuracy ?? 0;
@@ -231,9 +278,10 @@ function PlayGame({ map }: { map: MapDefinition }) {
       const ok = measurePlacement(current, dx, dy, (SLACK_PX * 2) / scale).accuracy >= 50;
       if (!ok) {
         playSfx('wrong');
-        returnPiece();
+        returnPiece(false);
         return;
       }
+      snapTo(current);
       setDragging(false);
       setFixed(true);
       setAttempt(null);
@@ -241,8 +289,13 @@ function PlayGame({ map }: { map: MapDefinition }) {
       setParty({ kind: 'sparkle', origin: toRoot(current.cx, current.cy), caption: '', n: Date.now() });
       return;
     }
+    const placement = measurePlacement(current, dx, dy, SLACK_PX / scale);
+    // close drops glide into the exact spot (satisfying); misses stay where they landed so the
+    // student can compare "your drop" with the real place
+    if (placement.accuracy >= 80) snapTo(current);
+    else settle();
     setDragging(false);
-    record(current, measurePlacement(current, dx, dy, SLACK_PX / scale), dx, dy);
+    record(current, placement, dx, dy);
   };
 
   const responder = useMemo(
@@ -253,25 +306,40 @@ function PlayGame({ map }: { map: MapDefinition }) {
         onPanResponderTerminationRequest: () => false,
         onPanResponderGrant: (_e, g) => {
           measure();
-          const { root } = origin.current;
+          const { root, card } = origin.current;
+          const { trayRatio: r, lift: up } = geo.current;
+          [pan, grab, size, tilt, show].forEach((v) => v.stopAnimation());
+          lean.reset();
           pan.setValue({ x: g.x0 - root.x, y: g.y0 - root.y });
+          // start exactly over the tray piece, at the tray's size…
+          grab.setValue({ x: card.x - g.x0, y: card.y - g.y0 + up });
+          size.setValue(r);
+          tilt.setValue(0);
+          show.setValue(1);
+          // …then lift it and bring it under the finger
+          Animated.parallel([
+            Animated.spring(grab, { toValue: { x: 0, y: 0 }, ...SPRING.follow }),
+            Animated.spring(size, { toValue: 1.06, ...SPRING.pop }),
+          ]).start();
           setDragging(true);
           playSfx('pickup');
+          haptic.pick();
         },
         onPanResponderMove: (_e, g) => {
           const { root } = origin.current;
           pan.setValue({ x: g.moveX - root.x, y: g.moveY - root.y });
+          lean.move(g.vx);
         },
         onPanResponderRelease: (_e, g) => {
           if (Math.abs(g.dx) < 4 && Math.abs(g.dy) < 4) {
-            setDragging(false);
+            returnRef.current(false); // just a tap: put it back
             return;
           }
           handleDrop.current(g.moveX, g.moveY);
         },
-        onPanResponderTerminate: () => setDragging(false),
+        onPanResponderTerminate: () => returnRef.current(false),
       }),
-    [measure, pan],
+    [measure, pan, grab, size, tilt, show, lean],
   );
 
   const skip = () => {
@@ -280,8 +348,6 @@ function PlayGame({ map }: { map: MapDefinition }) {
   };
 
   // ---- layout -------------------------------------------------------------
-  const cardBox = board ? s(190) : 96;
-  const pieceScale = current ? fitScale(current, cardBox) : 1;
   const total = questions.length;
   const anchor = current
     ? { left: -(current.cx - current.bbox[0]) * scale, top: -(current.cy - current.bbox[1]) * scale - lift }
@@ -441,19 +507,36 @@ function PlayGame({ map }: { map: MapDefinition }) {
           {panel}
         </View>
 
-        {dragging && current && scale > 0 && (
-          <Animated.View pointerEvents="none" style={[styles.floating, { transform: pan.getTranslateTransform() }]}>
-            <View style={{ position: 'absolute', left: anchor.left, top: anchor.top }}>
+        {/* The lifted piece stays mounted (hidden) for the whole question, so picking it up never
+            has to build its SVG — the first frame of a drag is as smooth as the rest. */}
+        {current && scale > 0 && (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.floating,
+              GPU_LAYER,
+              {
+                opacity: show,
+                transform: [
+                  { translateX: Animated.add(pan.x, grab.x) },
+                  { translateY: Animated.add(pan.y, grab.y) },
+                  { rotate: tiltDeg(tilt) },
+                  { scale: size },
+                ],
+              },
+            ]}
+          >
+            <View style={[{ position: 'absolute', left: anchor.left, top: anchor.top }, LIFT_SHADOW]}>
               <RegionShape
                 region={current}
                 scale={scale}
                 inline={mode === 'inline'}
-                fill="rgba(108,71,255,0.45)"
-                side="rgba(75,46,209,0.55)"
+                fill="rgba(108,71,255,0.5)"
+                side="rgba(75,46,209,0.6)"
                 stroke={colors.primary}
                 strokePx={1.6}
                 depthPx={4}
-                shadow
+                shadow={Platform.OS !== 'web'}
               />
             </View>
             {/* ring marks the drop point — essential for tiny regions */}
