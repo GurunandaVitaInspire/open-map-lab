@@ -2,12 +2,13 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Image, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Svg, { Defs, LinearGradient, Path, RadialGradient, Rect, Stop } from 'react-native-svg';
+import Svg, { Defs, LinearGradient, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { GameArt, type ArtKind } from '../components/GameArt';
 import { SoundButtons } from '../components/GameUI';
 import { HangingCards, type HangingItem } from '../components/home/HangingCards';
 import { RealSea } from '../components/home/RealSea';
 import { SideScenes, SkyClouds } from '../components/home/Sky';
+import { TitleWord } from '../components/home/TitleWord';
 import { Looping } from '../components/Looping';
 import { SetupSheet, type ChoiceGroup } from '../components/home/SetupSheet';
 import { MotionIcon, StarIcon } from '../components/icons';
@@ -68,7 +69,7 @@ export default function Home() {
 
   const quest = QUESTS.find((q) => q.key === open) ?? QUESTS[0];
   // On big screens size the cards so both ropes (all six games) fit in the first screen.
-  const cardW = Math.max(s(150), Math.min(s(250), ((height - s(215)) / 2 - s(80)) / 0.98));
+  const cardW = Math.max(s(150), Math.min(s(250), ((height - s(215)) / 2 - s(88)) / 0.98));
   // the empty margin on each side of a rope of three cards (same maths as HangingCards)
   const rowCardW = Math.min(cardW, (width - s(30) * 2 - s(26) * 2) / 3);
   const sideW = (width - (rowCardW * 3 + s(26) * 2)) / 2;
@@ -216,8 +217,8 @@ export default function Home() {
                   s={s}
                   maxCardW={board ? cardW : 172}
                   ratio={board ? 0.98 : 1.32}
-                  artRatio={board ? 0.6 : 0.72}
-                  sag={board ? s(30) : 26}
+                  artRatio={board ? 0.55 : 0.72}
+                  sag={board ? s(46) : 34}
                   delayBase={r * 380}
                   showSwipe={!board && r === 1}
                 />
@@ -343,63 +344,51 @@ function FadeIn({ delay, children }: { delay: number; children: React.ReactNode 
 }
 
 const WORDS = ['YOUR', 'MAP', 'ADVENTURE', 'STARTS', 'NOW!'];
-const ACCENT = 'ADVENTURE';
+const GOLD = 'ADVENTURE';
 
-/** Headline: words rise in one after another, then the accent word gets a hand-drawn underline. */
+/**
+ * Game-title headline: white letters with a navy outline and 3D depth, "ADVENTURE" in metallic
+ * gold with a glint that sweeps across it. Words pop up one after another with a little bounce.
+ */
 function Headline({ s, board, width }: { s: (n: number) => number; board: boolean; width: number }) {
   const motion = useMotion();
-  const words = WORDS;
   // one line on big screens, two on phones
   const LINES = board ? [WORDS] : [WORDS.slice(0, 3), WORDS.slice(3)];
-  const vals = useRef(words.map(() => new Animated.Value(motion ? 0 : 1))).current;
-  const underline = useRef(new Animated.Value(motion ? 0 : 1)).current;
+  const vals = useRef(WORDS.map(() => new Animated.Value(motion ? 0 : 1))).current;
   useEffect(() => {
     if (!motion) {
       vals.forEach((v) => v.setValue(1));
-      underline.setValue(1);
       return;
     }
     Animated.sequence([
       Animated.delay(120),
       Animated.stagger(
-        70,
-        vals.map((v) => Animated.timing(v, { toValue: 1, duration: 700, easing: Easing.bezier(0.16, 1, 0.3, 1), useNativeDriver: NATIVE })),
+        80,
+        vals.map((v) => Animated.spring(v, { toValue: 1, stiffness: 260, damping: 15, mass: 1, useNativeDriver: NATIVE })),
       ),
-      Animated.timing(underline, { toValue: 1, duration: 700, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
     ]).start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const size = board ? Math.min(s(64), (width - 80) / 19) : Math.min(40, width / 10.5);
+  const size = board ? Math.min(s(64), (width - 80) / 20.5) : Math.min(36, width / 12.5);
   let i = 0;
   return (
     <View accessibilityRole="header" accessibilityLabel="Your map adventure starts now!" style={{ alignItems: 'center' }}>
       {LINES.map((line, li) => (
-        <View key={li} style={{ flexDirection: 'row', gap: size * 0.28 }}>
+        <View key={li} style={{ flexDirection: 'row', gap: size * 0.2, marginTop: li ? -size * 0.12 : 0 }}>
           {line.map((w) => {
             const v = vals[i++];
-            const accent = w === ACCENT;
             return (
               <Animated.View
                 key={w}
-                style={{ opacity: v, transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }] }}
+                style={{
+                  opacity: v.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0, 1, 1], extrapolate: 'clamp' }),
+                  transform: [
+                    { translateY: v.interpolate({ inputRange: [0, 1], outputRange: [26, 0] }) },
+                    { scale: v.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) },
+                  ],
+                }}
               >
-                <Text style={[styles.headline, { fontSize: size, lineHeight: size * 1.02, color: accent ? colors.primary : colors.ink }]}>{w}</Text>
-                {accent && (
-                  <Animated.View
-                    style={{
-                      position: 'absolute',
-                      left: 0,
-                      bottom: -size * 0.14,
-                      height: size * 0.26,
-                      overflow: 'hidden',
-                      width: underline.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
-                    }}
-                  >
-                    <Svg width={size * 5.4} height={size * 0.26} viewBox="0 0 200 16" preserveAspectRatio="none">
-                      <Path d="M3 11 C 40 3, 80 3, 110 8 S 170 14, 197 5" stroke={colors.sun} strokeWidth={6} strokeLinecap="round" fill="none" />
-                    </Svg>
-                  </Animated.View>
-                )}
+                <TitleWord text={w} size={size} gold={w === GOLD} shine={motion} />
               </Animated.View>
             );
           })}
@@ -464,7 +453,6 @@ const styles = StyleSheet.create({
     borderColor: '#EDE6FF',
   },
   badgeText: { fontFamily: fonts.bodyBold, color: colors.ink },
-  headline: { fontFamily: fonts.display, letterSpacing: -1, textAlign: 'center' },
   sub: { fontFamily: fonts.bodyBold, color: '#33405F', textAlign: 'center', lineHeight: 24 },
   subRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' },
   subCol: { alignItems: 'center' },

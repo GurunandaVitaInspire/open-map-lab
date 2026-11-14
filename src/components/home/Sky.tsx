@@ -90,16 +90,16 @@ function Balloon({ width, on, bob = 16, secs = 4.6, phase = 0 }: { width: number
 export function SideScenes({ side, height, s }: { side: number; height: number; s: (n: number) => number }) {
   const on = useMotion();
   if (side < 150 || height < 300) return null;
-  const globe = Math.min(side * 0.74, s(250), height * 0.42);
+  const globe = Math.min(side * 0.72, s(250), height * 0.38);
   const balloon = Math.min(side * 0.5, s(170), (height * 0.42) / BALLOON_RATIO);
   return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="none">
-      <View style={[styles.col, { left: 0, width: side }]}>
-        <Looping on={on} from={{ transform: [{ translateY: 6 }] }} to={{ transform: [{ translateY: -6 }] }} duration={5200} smooth alternate>
-          <Globe size={globe} earth={EARTH} clouds={EARTH_CLOUDS} on={on} />
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      <View style={[styles.col, { left: 0, width: side }]} pointerEvents="box-none">
+        <Looping on={on} pointerEvents="box-none" from={{ transform: [{ translateY: 6 }] }} to={{ transform: [{ translateY: -6 }] }} duration={5200} smooth alternate>
+          <Globe size={globe} earth={EARTH} clouds={EARTH_CLOUDS} on={on} interactive />
         </Looping>
       </View>
-      <View style={[styles.col, { right: 0, width: side }]}>
+      <View style={[styles.col, { right: 0, width: side }]} pointerEvents="none">
         {/* far balloon: small, hazy, slower */}
         <View style={{ position: 'absolute', top: '16%', right: side * 0.12, opacity: 0.55 }}>
           <Balloon width={balloon * 0.42} on={on} bob={8} secs={6.2} phase={0.5} />

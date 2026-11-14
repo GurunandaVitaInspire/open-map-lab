@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import Svg, { Path, Rect } from 'react-native-svg';
+import Svg, { G, Path, Rect } from 'react-native-svg';
 import { useMotion } from '../../lib/motion';
 import { colors, fonts } from '../../theme';
 import { StarIcon } from '../icons';
 import { Looping } from '../Looping';
+import { makeCable, type Cable } from './cable';
 
 const NATIVE = Platform.OS !== 'web';
 
@@ -39,8 +40,11 @@ type Props = {
 };
 
 /**
- * Polaroid-style game cards pegged to a curved rope. Each card drops in with a damped swing,
- * then sways gently around its clip; tapping gives it a little kick.
+ * Polaroid-style game cards pegged to a cable, like cars on a cable-car line. The cable hangs by
+ * real physics (see cable.ts): straight stretches between cards and a bend at each card under its
+ * weight. As each card drops in, its weight lands on the cable, which dips and bounces, carrying
+ * the other cards with it. Cards sway gently around their clips; a tap kicks the card and jolts
+ * the cable.
  */
 export function HangingCards({ items, onPick, board, s, maxCardW, ratio, artRatio = 0.78, sag: sagProp, delayBase = 0, showSwipe = true }: Props) {
   const [width, setWidth] = useState(0);
@@ -55,43 +59,93 @@ export function HangingCards({ items, onPick, board, s, maxCardW, ratio, artRati
   const ropeY = board ? s(22) : 20;
   const height = ropeY + sag + cardH + s(28);
 
-  // quadratic rope from just outside the left edge to just outside the right edge
+  // the cable is fixed just outside the left and right edges
   const x0 = -30;
   const x1 = contentW + 30;
-  const ropeAt = (x: number) => {
-    const t = (x - x0) / (x1 - x0);
-    return { y: ropeY + 4 * sag * t * (1 - t), slope: (4 * sag * (1 - 2 * t)) / (x1 - x0) };
-  };
   const startX = board ? (contentW - (items.length * cardW + (items.length - 1) * gap)) / 2 : pad;
-
-  const rope = (
-    <Svg width={contentW} height={height} style={StyleSheet.absoluteFill} pointerEvents="none">
-      <Path d={`M${x0} ${ropeY} Q ${(x0 + x1) / 2} ${ropeY + 2 * sag} ${x1} ${ropeY}`} stroke="#B9A7E8" strokeWidth={3} fill="none" />
-      <Path d={`M${x0} ${ropeY + 1.5} Q ${(x0 + x1) / 2} ${ropeY + 2 * sag + 1.5} ${x1} ${ropeY + 1.5}`} stroke="#fff" strokeWidth={1} fill="none" opacity={0.6} />
-    </Svg>
+  const cxs = items.map((_, i) => startX + cardW / 2 + i * (cardW + gap));
+  const cxKey = cxs.map((x) => x.toFixed(1)).join(',');
+  const cable = useMemo(
+    () => makeCable(x0, x1, cxs, sag),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [x0, x1, cxKey, sag],
   );
+
+  // each card's weight on the cable: 0 until the card lands, then it springs to 1 (a little bounce)
+  const motion = useMotion();
+  const [loads] = useState(() => items.map(() => new Animated.Value(motion ? 0 : 1)));
+  useEffect(() => {
+    if (!motion) {
+      loads.forEach((l) => l.setValue(1));
+      return;
+    }
+    const landing = Animated.parallel(
+      loads.map((l, i) =>
+        Animated.sequence([
+          Animated.delay(250 + delayBase + i * 110 + 160),
+          Animated.spring(l, { toValue: 1, stiffness: 150, damping: 7.5, mass: 1, useNativeDriver: false }),
+        ]),
+      ),
+    );
+    landing.start();
+    return () => landing.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [motion]);
+
+  /** a tap jolts the cable at that card, and the whole line bounces */
+  const bump = (i: number) => {
+    if (!motion) return;
+    Animated.sequence([
+      Animated.timing(loads[i], { toValue: 1.5, duration: 90, useNativeDriver: false }),
+      Animated.spring(loads[i], { toValue: 1, stiffness: 150, damping: 6, mass: 1, useNativeDriver: false }),
+    ]).start();
+  };
+
+  // how far each card rides below its resting spot while the cable moves: the cable's height at
+  // card j depends linearly on every card's load, so this is a weighted sum of (load - 1)
+  const rides = useMemo(() => {
+    const zero = items.map(() => 0);
+    return cxs.map((xj) => {
+      const terms = loads.map((l, i) => {
+        const unit = items.map((_, k) => (k === i ? 1 : 0));
+        const c = cable.dipAt(xj, unit) - cable.dipAt(xj, zero);
+        return Animated.multiply(Animated.add(l, -1), c);
+      });
+      let sum: Animated.AnimatedAddition | Animated.AnimatedMultiplication = terms[0];
+      for (const t of terms.slice(1)) sum = Animated.add(sum, t);
+      return sum;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cable, loads]);
+
+  const rest = items.map(() => 1);
+  const rope = <Rope cable={cable} loads={loads} initial={motion ? 0 : 1} top={ropeY} width={contentW} height={height} />;
 
   const cards =
     width > 0 &&
     items.map((it, i) => {
-      const cx = startX + cardW / 2 + i * (cardW + gap);
-      const r = ropeAt(cx);
-      const tilt = (Math.atan(r.slope) * 180) / Math.PI * 0.6 + (i % 2 ? 2.5 : -2.5);
+      const cx = cxs[i];
+      // cards hang plumb from their pegs, with a hint of the cable's slope and a playful lean
+      const tilt = ((Math.atan(cable.slopes[i]) * 180) / Math.PI) * 0.35 + (i % 2 ? 1.8 : -1.8);
       return (
-        <HangingCard
-          key={it.key}
-          item={it}
-          x={cx - cardW / 2}
-          clipY={r.y}
-          w={cardW}
-          h={cardH}
-          artH={cardW * artRatio}
-          tilt={tilt}
-          index={i}
-          delayBase={delayBase}
-          onPress={() => onPick(it.key)}
-          s={s}
-        />
+        <Animated.View key={it.key} pointerEvents="box-none" style={[StyleSheet.absoluteFill, { transform: [{ translateY: rides[i] }] }]}>
+          <HangingCard
+            item={it}
+            x={cx - cardW / 2}
+            clipY={ropeY + cable.dipAt(cx, rest)}
+            w={cardW}
+            h={cardH}
+            artH={cardW * artRatio}
+            tilt={tilt}
+            index={i}
+            delayBase={delayBase}
+            onPress={() => {
+              bump(i);
+              onPick(it.key);
+            }}
+            s={s}
+          />
+        </Animated.View>
       );
     });
 
@@ -111,6 +165,47 @@ export function HangingCards({ items, onPick, board, s, maxCardW, ratio, artRati
       </ScrollView>
       {showSwipe && <Text style={styles.swipe}>Swipe for more games →</Text>}
     </View>
+  );
+}
+
+/**
+ * The cable itself: a twisted jute rope with a soft shadow. It only re-renders while a load is
+ * changing (cards landing or a tap), at most once per frame.
+ */
+function Rope({ cable, loads, initial, top, width, height }: { cable: Cable; loads: Animated.Value[]; initial: number; top: number; width: number; height: number }) {
+  const [vals, setVals] = useState(() => loads.map(() => initial));
+  useEffect(() => {
+    const cur = loads.map(() => initial);
+    let raf = 0;
+    const ids = loads.map((l, i) =>
+      l.addListener(({ value }) => {
+        cur[i] = value;
+        if (!raf)
+          raf = requestAnimationFrame(() => {
+            raf = 0;
+            setVals([...cur]);
+          });
+      }),
+    );
+    return () => {
+      ids.forEach((id, i) => loads[i].removeListener(id));
+      cancelAnimationFrame(raf);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loads]);
+  const d = cable.path(top, vals);
+  return (
+    <Svg width={width} height={height} style={StyleSheet.absoluteFill} pointerEvents="none">
+      <G transform="translate(0 3.5)">
+        <Path d={d} stroke="rgba(28, 40, 90, 0.16)" strokeWidth={5} fill="none" strokeLinecap="round" />
+      </G>
+      <Path d={d} stroke="#8A6643" strokeWidth={3.8} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      <Path d={d} stroke="#B48A5C" strokeWidth={2.4} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      {/* twisted strands */}
+      <G transform="translate(0 -0.6)">
+        <Path d={d} stroke="#EBCFA2" strokeWidth={1.2} strokeDasharray="2.4 3.2" fill="none" />
+      </G>
+    </Svg>
   );
 }
 
