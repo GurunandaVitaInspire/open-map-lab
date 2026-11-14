@@ -71,9 +71,12 @@ export function HangingCards({ items, onPick, board, s, maxCardW, ratio, artRati
     [x0, x1, cxKey, sag],
   );
 
-  // each card's weight on the cable: 0 until the card lands, then it springs to 1 (a little bounce)
+  // each card's weight on the cable: 0 until the card lands, then it springs to 1 (a little bounce).
+  // The current weights are tracked from the moment they exist, so the rope always draws what the
+  // cards feel, however late it appears (slow devices, background tabs).
   const motion = useMotion();
-  const [loads] = useState(() => items.map(() => new Animated.Value(motion ? 0 : 1)));
+  const [store] = useState(() => makeLoadStore(items.length, motion ? 0 : 1));
+  const loads = store.values;
   useEffect(() => {
     if (!motion) {
       loads.forEach((l) => l.setValue(1));
@@ -119,7 +122,7 @@ export function HangingCards({ items, onPick, board, s, maxCardW, ratio, artRati
   }, [cable, loads]);
 
   const rest = items.map(() => 1);
-  const rope = <Rope cable={cable} loads={loads} initial={motion ? 0 : 1} top={ropeY} width={contentW} height={height} />;
+  const rope = <Rope cable={cable} store={store} top={ropeY} width={contentW} height={height} />;
 
   const cards =
     width > 0 &&
@@ -168,31 +171,45 @@ export function HangingCards({ items, onPick, board, s, maxCardW, ratio, artRati
   );
 }
 
+type LoadStore = { values: Animated.Value[]; now: number[]; subs: Set<() => void> };
+
+/** Animated weights plus a plain copy of their current values, kept in sync from creation. */
+function makeLoadStore(n: number, start: number): LoadStore {
+  const now = Array.from({ length: n }, () => start);
+  const subs = new Set<() => void>();
+  const values = now.map((v, i) => {
+    const av = new Animated.Value(v);
+    av.addListener(({ value }) => {
+      now[i] = value;
+      subs.forEach((f) => f());
+    });
+    return av;
+  });
+  return { values, now, subs };
+}
+
 /**
  * The cable itself: a twisted jute rope with a soft shadow. It only re-renders while a load is
  * changing (cards landing or a tap), at most once per frame.
  */
-function Rope({ cable, loads, initial, top, width, height }: { cable: Cable; loads: Animated.Value[]; initial: number; top: number; width: number; height: number }) {
-  const [vals, setVals] = useState(() => loads.map(() => initial));
+function Rope({ cable, store, top, width, height }: { cable: Cable; store: LoadStore; top: number; width: number; height: number }) {
+  const [vals, setVals] = useState(() => [...store.now]);
   useEffect(() => {
-    const cur = loads.map(() => initial);
     let raf = 0;
-    const ids = loads.map((l, i) =>
-      l.addListener(({ value }) => {
-        cur[i] = value;
-        if (!raf)
-          raf = requestAnimationFrame(() => {
-            raf = 0;
-            setVals([...cur]);
-          });
-      }),
-    );
+    const sync = () => {
+      if (!raf)
+        raf = requestAnimationFrame(() => {
+          raf = 0;
+          setVals([...store.now]);
+        });
+    };
+    store.subs.add(sync);
+    sync(); // catch up with anything that happened before the rope appeared
     return () => {
-      ids.forEach((id, i) => loads[i].removeListener(id));
+      store.subs.delete(sync);
       cancelAnimationFrame(raf);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loads]);
+  }, [store]);
   const d = cable.path(top, vals);
   return (
     <Svg width={width} height={height} style={StyleSheet.absoluteFill} pointerEvents="none">

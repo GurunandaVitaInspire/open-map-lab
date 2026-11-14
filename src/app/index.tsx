@@ -69,7 +69,10 @@ export default function Home() {
 
   const quest = QUESTS.find((q) => q.key === open) ?? QUESTS[0];
   // On big screens size the cards so both ropes (all six games) fit in the first screen.
-  const cardW = Math.max(s(150), Math.min(s(250), ((height - s(215)) / 2 - s(88)) / 0.98));
+  // how far each rope dips under its three cards: a real line sags more the longer it is (~3.4% of
+  // the span on big screens), within limits so both rows still fit on one screen
+  const ropeSag = board ? Math.max(s(44), Math.min(s(84), (width + 60) * 0.034)) : 36;
+  const cardW = Math.max(s(150), Math.min(s(250), ((height - s(215)) / 2 - s(42) - ropeSag) / 0.98));
   // the empty margin on each side of a rope of three cards (same maths as HangingCards)
   const rowCardW = Math.min(cardW, (width - s(30) * 2 - s(26) * 2) / 3);
   const sideW = (width - (rowCardW * 3 + s(26) * 2)) / 2;
@@ -218,7 +221,7 @@ export default function Home() {
                   maxCardW={board ? cardW : 172}
                   ratio={board ? 0.98 : 1.32}
                   artRatio={board ? 0.55 : 0.72}
-                  sag={board ? s(46) : 34}
+                  sag={ropeSag}
                   delayBase={r * 380}
                   showSwipe={!board && r === 1}
                 />
