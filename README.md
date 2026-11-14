@@ -6,15 +6,18 @@ An open-source, completely free, interactive geography platform built with React
 
 ## What's here today
 
-Three games, picked from the home screen:
+Six games, picked from the home screen:
 
 | Game | Maps | How it works |
 |------|------|--------------|
-| **Place it** | India (36 states/UTs), World (~186 countries, continent zoom) | A state/country name and shape appear; drag it onto the map. Scored by how much of the shape overlaps its real position, plus the distance in km. Outline / Inline modes. |
-| **Name it** | India | One state blinks on the map; pick its name from four big buttons. Wrong options are neighbouring states. Retry until right: 1st try = 3 stars, 2nd = 2, 3rd = 1, with hints (where it is, which state it borders) after a miss. |
 | **India Jigsaw** | India | A classic knobbed jigsaw cut from a colourful India map with every state's name printed in its middle (plus sea names, a title box and a compass). Pieces come out of a box onto a wooden table a few at a time; drag them onto the board (or tap a piece, then its spot) and they snap in when close. 12 / 20 / 30 pieces, optional faint picture guide, Peek, Hint, timer and misses. |
+| **Name the State** | India | One state blinks on the map; pick its name from four big buttons. Wrong options are neighbouring states. Retry until right: 1st try = 3 stars, 2nd = 2, 3rd = 1, with hints (where it is, which state it borders) after a miss. |
+| **Drag the State** | India (36 states/UTs) | A state's name and shape appear; drag it onto the map. Scored by how much of the shape overlaps its real position, plus the distance in km. Outline / Inline modes. After a miss (or a skip) the real spot glows and the student must drag the state there before moving on: no extra points, just practice. |
+| **India Rivers** | India (20 major rivers) | "Draw the Ganga": start at the green dot and draw the river freehand over faint state borders. Scored on how much of the real river the drawing follows and how far it strays, with generous, finger-sized tolerances (roughly right earns points, close to the river earns full marks). The real river is then revealed with the states it flows through. 10 rivers or all 20. |
+| **Name the Country** | World (~186 countries, continent zoom) | One country blinks on the world map (tiny countries get a ring); pick its name from four options, mostly its neighbours. Same retry scoring and hints (continent, neighbours) as Name the State. |
+| **World Explorer** | World (~186 countries, continent zoom) | Drag countries onto the world map, scored like Drag the State. |
 
-**Landing page:** a big two-line headline that reveals word by word, game cards hanging from a rope like polaroids (they drop in with a swing, sway gently and kick when tapped), drifting clouds, and a moving sea with layered waves, a bobbing paper boat and a scrolling feature ticker. Tapping a card opens a setup sheet with that game's options. A **pause-motion** button stops all ambient animation (it is also off when the device asks for reduced motion).
+**Landing page:** a compact "Your Map Adventure Starts Now!" headline that reveals word by word, then all six game cards hanging from two ropes like polaroids (they drop in with a swing, sway gently and kick when tapped), drifting clouds, and a moving sea with layered waves, a bobbing paper boat and a scrolling feature ticker. Tapping a card opens a setup sheet with that game's options. A **pause-motion** button stops all ambient animation (it is also off when the device asks for reduced motion).
 
 **Game feel:** a 3D map slab on a gently moving, wave-patterned ocean, chunky pressable buttons, the Baloo 2 and Nunito fonts, stars, streaks and points, and best scores saved on the device (no account).
 - 100% / first try: a firework blast from the region, a flash, confetti rain and a PERFECT badge (plus a haptic buzz on phones)
@@ -50,7 +53,7 @@ While OneDrive is still syncing a newly created file, Node reports it as a symbo
 ## Performance notes
 
 - **Fonts** are subset to the Latin characters the app uses (`assets/fonts`, OFL-licensed): ~65 KB of WOFF2 on the web instead of ~1.2 MB.
-- **The world map** (~400 KB) is a separate chunk that only downloads when World Explorer is opened (`loadMap` / `useMap` in `src/data/maps.ts`); the landing card uses a 37 KB simplified copy.
+- **The world map** (~400 KB) is a separate chunk that only downloads when a world game is opened (`loadMap` / `useMap` in `src/data/maps.ts`); the landing card uses a 37 KB simplified copy.
 - **Ambient animation** (sea, waves, clouds, swaying cards, blinking, confetti) runs as CSS keyframes on the web via `src/components/Looping.tsx` and `src/lib/cssAnim.ts`, so it costs no JavaScript per frame and never competes with dragging. Native apps use the native animation driver.
 - **Maps** draw the 3D slab once per round; answering only redraws the small "answered" layer.
 - **Caching:** hashed JS and asset files are served with a one-year immutable cache (`vercel.json`).
@@ -58,7 +61,8 @@ While OneDrive is still syncing a newly created file, Node reports it as a symbo
 ## Project layout
 
 ```
-src/app/              Expo Router screens (index = landing page, play/ = Place it, quiz/ = Name it, puzzle/ = India Jigsaw)
+src/app/              Expo Router screens (index = landing page, play/ = Drag the State + World Explorer,
+                      quiz/ = Name the State + Name the Country, puzzle/ = India Jigsaw, rivers/ = India Rivers)
 src/components/       MapCanvas (base map), RegionShape (piece), GameUI (shared header/results), Celebration, ui
 src/lib/sound.ts      Sound effects and music (expo-audio)
 src/lib/motion.ts     Pause-motion / reduced-motion setting
@@ -69,6 +73,7 @@ assets/sounds/        CC0 audio (see CREDITS.md)
 src/data/maps.ts      Map registry — add new maps here
 src/data/generated/   Pre-projected SVG path data (built by the script below)
 src/lib/game.ts       Question generation and drop checking
+src/lib/rivers.ts     River data and freehand-drawing score
 scripts/build-maps.mjs  Converts raw GIS data → compact SVG paths
 data-sources/         Raw map data
 ```
@@ -79,6 +84,7 @@ Maps are projected and simplified **at build time**, so the app ships plain SVG 
 
 ```bash
 curl -L -o data-sources/ne_10m_admin_0_countries_ind.geojson https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries_ind.geojson
+curl -L -o data-sources/ne_10m_rivers_lake_centerlines.geojson https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_rivers_lake_centerlines.geojson
 npm run build:maps
 ```
 
@@ -91,6 +97,7 @@ npm run build:maps
 ## Data sources & licences
 
 - **World:** [Natural Earth](https://www.naturalearthdata.com/) 1:10m Admin 0 countries, *India point-of-view* edition, so India's borders on the world map match the India map. Public domain.
+- **Rivers:** Natural Earth 1:10m rivers and lake centrelines, clipped to India (`src/data/generated/india-rivers.json`). Public domain. The 7 MB raw file is not committed; download it with the command above.
 - **India states & districts:** [udit-001/india-maps-data](https://github.com/udit-001/india-maps-data) (2011 census district codes, current 36 states/UTs). That repository does not state a licence. Confirm the terms, or switch to a source with an explicit licence such as [datameet/maps](https://github.com/datameet/maps) (CC BY 4.0), before a public release.
 
 Code: MIT (see `LICENSE`).

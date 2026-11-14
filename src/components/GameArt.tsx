@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { G, Path, Rect } from 'react-native-svg';
 import { INDIA } from '../data/maps';
+import riversLite from '../data/generated/india-rivers-lite.json';
 import worldLite from '../data/generated/world-lite.json';
 import { makeJigsaw } from '../lib/jigsaw';
 import { useMotion } from '../lib/motion';
@@ -9,14 +10,81 @@ import { colors, fonts } from '../theme';
 import { Looping } from './Looping';
 import { buildPicture } from './PuzzlePicture';
 
-export type ArtKind = 'place' | 'quiz' | 'puzzle' | 'world';
+export type ArtKind = 'place' | 'quiz' | 'puzzle' | 'world' | 'rivers' | 'quiz-world';
 
 /** Small illustration for each game, drawn from the real map data. */
 export const GameArt = memo(function GameArt({ kind }: { kind: ArtKind }) {
   if (kind === 'world') return <WorldArt />;
+  if (kind === 'quiz-world') return <WorldQuizArt />;
   if (kind === 'puzzle') return <JigsawArt />;
+  if (kind === 'rivers') return <RiversArt />;
   return <IndiaArt kind={kind} />;
 });
+
+/** India with its big rivers in blue, and a pencil line being drawn along the Ganga. */
+function RiversArt() {
+  const { data } = INDIA;
+  const rivers = riversLite as { id: string; d: string }[];
+  const vb = `-40 -60 ${data.width + 80} ${data.height + 110}`;
+  return (
+    <Svg width="100%" height="100%" viewBox={vb}>
+      <G transform="translate(0 14)">
+        {data.regions.map((r) => (
+          <Path key={r.id} d={r.d} fill={colors.landSide} stroke={colors.landSide} strokeWidth={4} />
+        ))}
+      </G>
+      {data.regions.map((r) => (
+        <Path key={r.id} d={r.d} fill={colors.landTop} stroke={colors.landStroke} strokeWidth={2} />
+      ))}
+      {rivers.map((r) => (
+        <Path key={r.id} d={r.d} fill="none" stroke="#1E88E5" strokeWidth={r.id === 'ganga' ? 12 : 7} strokeLinecap="round" strokeLinejoin="round" />
+      ))}
+      {rivers
+        .filter((r) => r.id === 'ganga')
+        .map((r) => (
+          <Path key="pen" d={r.d} transform="translate(10 -16)" fill="none" stroke={colors.primary} strokeWidth={8} strokeDasharray="22 14" strokeLinecap="round" />
+        ))}
+      {/* pencil */}
+      <G transform="translate(700 150) rotate(35)">
+        <Rect x={-14} y={-120} width={28} height={110} rx={6} fill={colors.sun} />
+        <Rect x={-14} y={-140} width={28} height={24} rx={6} fill={colors.coral} />
+        <Path d="M-14 -10 L14 -10 L0 22 Z" fill="#F2D3A6" />
+        <Path d="M-5 10 L5 10 L0 22 Z" fill={colors.ink} />
+      </G>
+    </Svg>
+  );
+}
+
+/** World map with one country blinking, like the Name the Country game. */
+function WorldQuizArt() {
+  const motion = useMotion();
+  const data = worldLite as { width: number; height: number; regions: { id: string; d: string }[] };
+  const hero = data.regions.find((r) => r.id === 'ind') ?? data.regions[0];
+  const depth = data.width / 70;
+  const vb = `0 ${-depth * 3} ${data.width} ${data.height + depth * 6}`;
+  return (
+    <View style={{ flex: 1 }}>
+      <Svg width="100%" height="100%" viewBox={vb}>
+        <G transform={`translate(0 ${depth})`}>
+          {data.regions.map((r) => (
+            <Path key={r.id} d={r.d} fill={colors.landSide} stroke={colors.landSide} strokeWidth={depth / 3} />
+          ))}
+        </G>
+        {data.regions.map((r) => (
+          <Path key={r.id} d={r.d} fill={colors.landTop} stroke={colors.landStroke} strokeWidth={data.width / 600} />
+        ))}
+      </Svg>
+      <Looping on={motion} style={StyleSheet.absoluteFill} pointerEvents="none" from={{ opacity: 1 }} to={{ opacity: 0.25 }} duration={600} smooth alternate>
+        <Svg width="100%" height="100%" viewBox={vb}>
+          <Path d={hero.d} fill={colors.coral} stroke="#fff" strokeWidth={3} />
+        </Svg>
+      </Looping>
+      <View style={[styles.bubble, { backgroundColor: colors.coral, borderBottomColor: '#E0504F' }]} pointerEvents="none">
+        <Text style={styles.bubbleText}>?</Text>
+      </View>
+    </View>
+  );
+}
 
 function IndiaArt({ kind }: { kind: 'place' | 'quiz' }) {
   const { data } = INDIA;

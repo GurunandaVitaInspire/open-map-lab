@@ -20,10 +20,10 @@ import { colors, fonts, useLayoutMode } from '../theme';
 
 const NATIVE = Platform.OS !== 'web';
 
-type QuestKey = 'india' | 'quiz' | 'jigsaw' | 'world';
+type QuestKey = 'jigsaw' | 'quiz' | 'drag' | 'rivers' | 'quizWorld' | 'world';
 type Quest = {
   key: QuestKey;
-  game: 'place' | 'quiz' | 'puzzle';
+  game: 'place' | 'quiz' | 'puzzle' | 'rivers';
   map: 'india' | 'world';
   art: ArtKind;
   title: string;
@@ -34,11 +34,14 @@ type Quest = {
   bestKey: string;
 };
 
+// Row 1: India games. Row 2: rivers + the world games.
 const QUESTS: Quest[] = [
-  { key: 'india', game: 'place', map: 'india', art: 'place', title: 'India Map Quest', subtitle: 'Drag every state to its home', tint: '#EEE9FF', clip: colors.primary, clipDark: colors.primaryDark, bestKey: 'india' },
-  { key: 'quiz', game: 'quiz', map: 'india', art: 'quiz', title: 'Name the State', subtitle: 'Spot the blinking state, pick its name', tint: '#E3F7EE', clip: colors.mint, clipDark: '#119E76', bestKey: 'quiz-india' },
   { key: 'jigsaw', game: 'puzzle', map: 'india', art: 'puzzle', title: 'India Jigsaw', subtitle: 'Build the labelled map piece by piece', tint: '#FFF3D6', clip: colors.sun, clipDark: colors.sunDark, bestKey: 'puzzle-india' },
-  { key: 'world', game: 'place', map: 'world', art: 'world', title: 'World Explorer', subtitle: 'Countries on every continent', tint: '#DFF1FB', clip: colors.sky, clipDark: '#2B7FD1', bestKey: 'world' },
+  { key: 'quiz', game: 'quiz', map: 'india', art: 'quiz', title: 'Name the State', subtitle: 'Spot the blinking state, pick its name', tint: '#E3F7EE', clip: colors.mint, clipDark: '#119E76', bestKey: 'quiz-india' },
+  { key: 'drag', game: 'place', map: 'india', art: 'place', title: 'Drag the State', subtitle: 'Drag every state to its home', tint: '#EEE9FF', clip: colors.primary, clipDark: colors.primaryDark, bestKey: 'india' },
+  { key: 'rivers', game: 'rivers', map: 'india', art: 'rivers', title: 'India Rivers', subtitle: 'Draw where each river flows', tint: '#E1F1FD', clip: '#1E88E5', clipDark: '#1565C0', bestKey: 'rivers-india' },
+  { key: 'quizWorld', game: 'quiz', map: 'world', art: 'quiz-world', title: 'Name the Country', subtitle: 'Spot the blinking country, pick its name', tint: '#FFE9E6', clip: colors.coral, clipDark: '#E0504F', bestKey: 'quiz-world' },
+  { key: 'world', game: 'place', map: 'world', art: 'world', title: 'World Explorer', subtitle: 'Drag countries onto the world map', tint: '#DFF1FB', clip: colors.sky, clipDark: '#2B7FD1', bestKey: 'world' },
 ];
 
 const FEATURES = ['100% free', 'Open source', 'No sign-up', 'No ads', 'Works on smartboards', 'India & World maps', 'Made for classrooms', 'by VitaInspire'];
@@ -46,7 +49,7 @@ const FEATURES = ['100% free', 'Open source', 'No sign-up', 'No ads', 'Works on 
 const starsFor = (best: number | null) => (best === null ? 0 : best >= 90 ? 3 : best >= 70 ? 2 : best >= 45 ? 1 : 0);
 
 export default function Home() {
-  const { mode: layout, s, width } = useLayoutMode();
+  const { mode: layout, s, width, height } = useLayoutMode();
   const board = layout === 'board';
   const [bests, setBests] = useState<Record<string, number | null>>({});
   const [open, setOpen] = useState<QuestKey | null>(null);
@@ -63,6 +66,8 @@ export default function Home() {
   );
 
   const quest = QUESTS.find((q) => q.key === open) ?? QUESTS[0];
+  // On big screens size the cards so both ropes (all six games) fit in the first screen.
+  const cardW = Math.max(s(150), Math.min(s(250), ((height - s(215)) / 2 - s(80)) / 0.98));
   const items: HangingItem[] = QUESTS.map((q) => ({
     key: q.key,
     title: q.title,
@@ -77,7 +82,8 @@ export default function Home() {
 
   const openQuest = (key: string) => {
     playSfx('tap');
-    if (key === 'world') prefetchMap('world'); // download while the setup sheet is open
+    const q = QUESTS.find((x) => x.key === key);
+    if (q?.map === 'world') prefetchMap('world'); // download while the setup sheet is open
     setGroup('');
     setOpen(key as QuestKey);
   };
@@ -85,7 +91,8 @@ export default function Home() {
   const play = () => {
     playSfx('tap');
     setOpen(null);
-    if (quest.game === 'quiz') router.push({ pathname: '/quiz/[map]', params: { map: 'india', mode, count } });
+    if (quest.game === 'quiz') router.push({ pathname: '/quiz/[map]', params: { map: quest.map, mode, count, group } });
+    else if (quest.game === 'rivers') router.push({ pathname: '/rivers/[map]', params: { map: 'india', count } });
     else if (quest.game === 'puzzle') router.push({ pathname: '/puzzle/[map]', params: { map: 'india', mode: guide === 'on' ? 'inline' : 'outline', count: pieces } });
     else router.push({ pathname: '/play/[map]', params: { map: quest.map, mode, group, count } });
   };
@@ -104,9 +111,13 @@ export default function Home() {
     onChange: tapSet((v) => setMode(v as DiagramMode)),
     help:
       quest.game === 'quiz'
-        ? mode === 'outline'
-          ? 'Only India’s border and the blinking state are shown.'
-          : 'All state borders are shown — easier for beginners.'
+        ? quest.map === 'world'
+          ? mode === 'outline'
+            ? 'Only coastlines and the blinking country are shown.'
+            : 'All country borders are shown — easier for beginners.'
+          : mode === 'outline'
+            ? 'Only India’s border and the blinking state are shown.'
+            : 'All state borders are shown — easier for beginners.'
         : MAP_META[quest.map].modeHelp[mode],
   };
   const countGroup: ChoiceGroup = {
@@ -143,6 +154,18 @@ export default function Home() {
             help: guide === 'on' ? 'A faint copy of the map on the board shows where pieces go.' : 'An empty board — use the state names on each piece.',
           },
         ]
+      : quest.game === 'rivers'
+        ? [
+            {
+              label: 'Rivers',
+              options: [
+                { label: '10', value: '10' },
+                { label: 'All 20', value: '0' },
+              ],
+              value: count === '0' ? '0' : '10',
+              onChange: tapSet(setCount),
+            },
+          ]
       : quest.map === 'world'
         ? [
             styleGroup,
@@ -165,28 +188,34 @@ export default function Home() {
             <HeroBackground />
             <Clouds count={board ? 3 : 2} />
             <NavBar s={s} board={board} />
-            <View style={[styles.hero, { paddingHorizontal: s(20), paddingTop: s(board ? 26 : 14), gap: s(14) }]}>
-              <FadeIn delay={0}>
-                <View style={[styles.badge, { paddingHorizontal: s(14), paddingVertical: s(6) }]}>
-                  <StarIcon size={s(16)} />
-                  <Text style={[styles.badgeText, { fontSize: s(13) }]}>100% free for every classroom</Text>
-                </View>
-              </FadeIn>
+            <View style={[styles.hero, { paddingHorizontal: s(20), paddingTop: s(board ? 4 : 8), gap: s(10) }]}>
               <Headline s={s} board={board} width={width} />
-              <FadeIn delay={650}>
-                <Text style={[styles.sub, { fontSize: s(board ? 18 : 15), maxWidth: s(620) }]}>
-                  Drag states into place, name the blinking ones and build India like a jigsaw — no sign-up, no ads, just play.
-                </Text>
-              </FadeIn>
-              <FadeIn delay={780}>
-                <View style={{ flexDirection: 'row', gap: s(10), flexWrap: 'wrap', justifyContent: 'center' }}>
-                  <Button label="Start playing" variant="primary" size={s(18)} onPress={() => openQuest('india')} />
+              <FadeIn delay={520}>
+                <View style={[board ? styles.subRow : styles.subCol, { gap: s(board ? 18 : 10) }]}>
+                  <Text style={[styles.sub, { fontSize: s(board ? 17 : 15) }]}>
+                    6 free games: drag, spot, build and draw your way across India and the world.
+                  </Text>
+                  <Button label="Start playing" variant="primary" size={s(board ? 16 : 17)} onPress={() => openQuest(QUESTS[0].key)} />
                 </View>
               </FadeIn>
             </View>
-            <View style={{ marginTop: s(board ? 18 : 10) }}>
-              <HangingCards items={items} onPick={openQuest} board={board} s={s} />
-            </View>
+            {/* two ropes of three games each, so all six are visible at once on big screens */}
+            {[items.slice(0, 3), items.slice(3, 6)].map((row, r) => (
+              <View key={r} style={{ marginTop: r === 0 ? s(board ? 6 : 8) : board ? -s(6) : 4 }}>
+                <HangingCards
+                  items={row}
+                  onPick={openQuest}
+                  board={board}
+                  s={s}
+                  maxCardW={board ? cardW : 172}
+                  ratio={board ? 0.98 : 1.32}
+                  artRatio={board ? 0.6 : 0.72}
+                  sag={board ? s(30) : 26}
+                  delayBase={r * 380}
+                  showSwipe={!board && r === 1}
+                />
+              </View>
+            ))}
           </View>
 
           {/* ---- the sea ---- */}
@@ -210,7 +239,13 @@ export default function Home() {
           art={<GameArt kind={quest.art} />}
           tint={quest.tint}
           groups={groups}
-          note={quest.game === 'puzzle' ? 'Pieces come out of the box a few at a time. Drag them onto the board, or tap a piece and then tap its spot.' : undefined}
+          note={
+            quest.game === 'puzzle'
+              ? 'Pieces come out of the box a few at a time. Drag them onto the board, or tap a piece and then tap its spot.'
+              : quest.game === 'rivers'
+                ? 'Start at the green dot and draw the river with your finger or mouse. Faint state borders help you find your way.'
+                : undefined
+          }
           playLabel={`Play ${quest.title}`}
           onPlay={play}
           board={board}
@@ -276,16 +311,15 @@ function FadeIn({ delay, children }: { delay: number; children: React.ReactNode 
   return <Animated.View style={{ opacity: v, transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }] }}>{children}</Animated.View>;
 }
 
-const LINES = [
-  ['LEARN', 'THE', 'MAP'],
-  ['BY', 'PLAYING', 'IT'],
-];
-const ACCENT = 'PLAYING';
+const WORDS = ['YOUR', 'MAP', 'ADVENTURE', 'STARTS', 'NOW!'];
+const ACCENT = 'ADVENTURE';
 
-/** Two-line headline: words rise in one after another, then the accent word gets a hand-drawn underline. */
+/** Headline: words rise in one after another, then the accent word gets a hand-drawn underline. */
 function Headline({ s, board, width }: { s: (n: number) => number; board: boolean; width: number }) {
   const motion = useMotion();
-  const words = LINES.flat();
+  const words = WORDS;
+  // one line on big screens, two on phones
+  const LINES = board ? [WORDS] : [WORDS.slice(0, 3), WORDS.slice(3)];
   const vals = useRef(words.map(() => new Animated.Value(motion ? 0 : 1))).current;
   const underline = useRef(new Animated.Value(motion ? 0 : 1)).current;
   useEffect(() => {
@@ -304,10 +338,10 @@ function Headline({ s, board, width }: { s: (n: number) => number; board: boolea
     ]).start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const size = board ? Math.min(s(84), width / 11) : Math.min(46, width / 8.2);
+  const size = board ? Math.min(s(64), (width - 80) / 19) : Math.min(40, width / 10.5);
   let i = 0;
   return (
-    <View accessibilityRole="header" accessibilityLabel="Learn the map by playing it" style={{ alignItems: 'center' }}>
+    <View accessibilityRole="header" accessibilityLabel="Your map adventure starts now!" style={{ alignItems: 'center' }}>
       {LINES.map((line, li) => (
         <View key={li} style={{ flexDirection: 'row', gap: size * 0.28 }}>
           {line.map((w) => {
@@ -330,7 +364,7 @@ function Headline({ s, board, width }: { s: (n: number) => number; board: boolea
                       width: underline.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
                     }}
                   >
-                    <Svg width={size * 3.6} height={size * 0.26} viewBox="0 0 200 16" preserveAspectRatio="none">
+                    <Svg width={size * 5.4} height={size * 0.26} viewBox="0 0 200 16" preserveAspectRatio="none">
                       <Path d="M3 11 C 40 3, 80 3, 110 8 S 170 14, 197 5" stroke={colors.sun} strokeWidth={6} strokeLinecap="round" fill="none" />
                     </Svg>
                   </Animated.View>
@@ -401,6 +435,8 @@ const styles = StyleSheet.create({
   badgeText: { fontFamily: fonts.bodyBold, color: colors.ink },
   headline: { fontFamily: fonts.display, letterSpacing: -1, textAlign: 'center' },
   sub: { fontFamily: fonts.body, color: colors.inkSoft, textAlign: 'center', lineHeight: 24 },
+  subRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' },
+  subCol: { alignItems: 'center' },
   sea: { backgroundColor: '#4FA8DB' },
   tick: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.18)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.35)' },
   tickText: { fontFamily: fonts.bodyBold, color: '#FFFFFF' },

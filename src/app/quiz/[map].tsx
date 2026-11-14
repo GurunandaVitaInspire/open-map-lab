@@ -1,7 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Animated, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { OceanBackdrop } from '../../components/Backdrops';
 import { Celebration, type CelebrationKind } from '../../components/Celebration';
@@ -11,7 +11,7 @@ import { MapCanvas } from '../../components/MapCanvas';
 import { RegionHighlight } from '../../components/RegionHighlight';
 import { useMapFrame } from '../../components/useMapFrame';
 import { Button, Card, Label } from '../../components/ui';
-import { INDIA, getView, type Region } from '../../data/maps';
+import { getView, useMap, type MapDefinition, type Region } from '../../data/maps';
 import { buildQuestions, quizOptions, quizScore, regionWhere, shuffle, type DiagramMode } from '../../lib/game';
 import { saveBest } from '../../lib/progress';
 import { playSfx } from '../../lib/sound';
@@ -23,22 +23,39 @@ type Result = { region: Region; tries: number; score: number; points: number };
 
 const EUREKA = ['Eureka!', 'Spot on!', 'Brilliant!', 'You got it!', 'Map master!'];
 
+/** "Name the State" (India) and "Name the Country" (world): loads the map, then plays. */
 export default function Quiz() {
-  // This game is India only.
-  const map = INDIA;
-  const params = useLocalSearchParams<{ mode?: string; count?: string }>();
+  const params = useLocalSearchParams<{ map: string }>();
+  const map = useMap(params.map);
+  if (!map) {
+    return (
+      <SafeAreaView style={gameStyles.safe}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14 }}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={{ fontFamily: fonts.bodyBold, color: colors.inkSoft, fontSize: 15 }}>Unrolling the map…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+  return <QuizGame map={map} />;
+}
+
+function QuizGame({ map }: { map: MapDefinition }) {
+  const params = useLocalSearchParams<{ mode?: string; count?: string; group?: string }>();
   const mode: DiagramMode = params.mode === 'inline' ? 'inline' : 'outline';
   const count = Number(params.count ?? 10) || 0;
+  const group = map.id === 'world' && params.group ? params.group : undefined;
+  const unit = map.unit; // "state" or "country"
   const { mode: layout, s } = useLayoutMode();
   const board = layout === 'board';
-  const view = useMemo(() => getView(map), [map]);
+  const view = useMemo(() => getView(map, group), [map, group]);
   const frame = useMapFrame(view);
 
   const [round, setRound] = useState(0);
   const questions: Question[] = useMemo(
-    () => buildQuestions(map, { mapId: 'india', mode, count }).map((region) => ({ region, options: quizOptions(map, region) })),
+    () => buildQuestions(map, { mapId: map.id, mode, count, group }).map((region) => ({ region, options: quizOptions(map, region) })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mode, count, round],
+    [map.id, mode, count, group, round],
   );
   const [index, setIndex] = useState(0);
   const [wrong, setWrong] = useState<string[]>([]); // option ids tried and wrong for the current question
@@ -66,7 +83,7 @@ export default function Quiz() {
   useEffect(() => {
     if (!finished || !results.length || average === null) return;
     playSfx('complete');
-    saveBest('quiz-india', mode, undefined, average).then(setNewBest);
+    saveBest(`quiz-${map.id}`, mode, group, average).then(setNewBest);
     if (average >= 70)
       setParty({ kind: average >= 90 ? 'perfect' : 'great', origin: { x: frame.rootSize.w / 2, y: frame.rootSize.h / 2 }, caption: 'Round complete!', n: Date.now() });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -147,9 +164,9 @@ export default function Quiz() {
     <Card lip={board ? 8 : 6} style={[board ? { width: s(380), padding: s(22), gap: s(14) } : [gameStyles.sheet, { gap: 10 }], gameStyles.panel]}>
       <ScrollView style={gameStyles.panelScroll} contentContainerStyle={{ gap: board ? s(14) : 10 }} showsVerticalScrollIndicator={false}>
         <View style={{ gap: s(2) }}>
-          <Label size={s(11)}>{solved ? 'Correct!' : 'Name the blinking state'}</Label>
+          <Label size={s(11)}>{solved ? 'Correct!' : `Name the blinking ${unit}`}</Label>
           <Text style={[gameStyles.name, { fontSize: s(board ? 30 : 22), lineHeight: s(board ? 36 : 27) }]}>
-            {solved ? q.region.name : 'Which state is this?'}
+            {solved ? q.region.name : `Which ${unit} is this?`}
           </Text>
         </View>
 
@@ -177,7 +194,7 @@ export default function Quiz() {
           </View>
         ) : null}
 
-        {result && <QuizResult result={result} s={s} board={board} streak={streak} />}
+        {result && <QuizResult result={result} map={map} s={s} board={board} streak={streak} />}
       </ScrollView>
 
       {solved && <Button label={index + 1 >= total ? 'See results' : 'Next'} variant={result?.tries === 1 ? 'sun' : 'primary'} size={s(18)} onPress={next} />}
@@ -190,7 +207,7 @@ export default function Quiz() {
         <GameTopBar
           s={s}
           board={board}
-          title="Name it · India"
+          title={`${map.id === 'world' ? 'Name the Country' : 'Name the State'}${group ? ` · ${group}` : ''}`}
           subtitle={mode === 'inline' ? 'Inline' : 'Outline'}
           done={results.length}
           total={total}
@@ -204,7 +221,7 @@ export default function Quiz() {
             <View ref={frame.mapRef} style={gameStyles.mapInner} onLayout={frame.onMapLayout}>
               {frame.scale > 0 && (
                 <>
-                  <MapCanvas data={map.data} view={view} scale={frame.scale} scores={scores} showBorders={mode === 'inline'} showInner={mode === 'inline'} />
+                  <MapCanvas data={map.data} view={view} focusGroup={group} scale={frame.scale} scores={scores} showBorders={mode === 'inline'} showInner={mode === 'inline'} />
                   {q && !solved && (
                     <RegionHighlight region={q.region} view={view} scale={frame.scale} inset={frame.inset} color={colors.primary} blink />
                   )}
@@ -282,9 +299,8 @@ function OptionButton({ label, state, onPress, s, board }: { label: string; stat
   );
 }
 
-function QuizResult({ result, s, board, streak }: { result: Result; s: (n: number) => number; board: boolean; streak: number }) {
+function QuizResult({ result, map, s, board, streak }: { result: Result; map: MapDefinition; s: (n: number) => number; board: boolean; streak: number }) {
   const r = rate(result.score);
-  const map = INDIA;
   const neighbours = (result.region.neighbors ?? []).map((id) => map.data.regions.find((x) => x.id === id)?.name).filter(Boolean);
   const line =
     result.tries === 1 ? 'First try — perfect!' : result.tries === 2 ? 'Second try — well done!' : 'You found it — keep practising!';
@@ -303,8 +319,9 @@ function QuizResult({ result, s, board, streak }: { result: Result; s: (n: numbe
         </Text>
       )}
       <Text style={[gameStyles.tip, { fontSize: s(13) }]}>
-        {result.region.group === 'Union Territory' ? 'Union territory' : 'State'}
-        {result.region.districts?.length ? ` · ${result.region.districts.length} districts` : ''}
+        {map.id === 'world'
+          ? `A country in ${result.region.group ?? 'the world'}`
+          : `${result.region.group === 'Union Territory' ? 'Union territory' : 'State'}${result.region.districts?.length ? ` · ${result.region.districts.length} districts` : ''}`}
       </Text>
     </View>
   );

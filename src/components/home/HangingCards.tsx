@@ -20,22 +20,40 @@ export type HangingItem = {
   note?: string;
 };
 
-type Props = { items: HangingItem[]; onPick: (key: string) => void; board: boolean; s: (n: number) => number };
+type Props = {
+  items: HangingItem[];
+  onPick: (key: string) => void;
+  board: boolean;
+  s: (n: number) => number;
+  /** card size budget (px) so several ropes fit on one screen */
+  maxCardW?: number;
+  /** card height ÷ width */
+  ratio?: number;
+  /** art panel height ÷ card width */
+  artRatio?: number;
+  /** how far the rope dips in the middle (px) */
+  sag?: number;
+  /** entrance delay offset, so a second rope drops in after the first */
+  delayBase?: number;
+  showSwipe?: boolean;
+};
 
 /**
  * Polaroid-style game cards pegged to a curved rope. Each card drops in with a damped swing,
  * then sways gently around its clip; tapping gives it a little kick.
  */
-export function HangingCards({ items, onPick, board, s }: Props) {
+export function HangingCards({ items, onPick, board, s, maxCardW, ratio, artRatio = 0.78, sag: sagProp, delayBase = 0, showSwipe = true }: Props) {
   const [width, setWidth] = useState(0);
   const gap = board ? s(26) : 16;
   const pad = board ? s(30) : 20;
-  const cardW = board ? Math.min(s(250), (width - pad * 2 - gap * (items.length - 1)) / items.length) : 196;
-  const cardH = cardW * (board ? 1.24 : 1.4);
+  const cardW = board
+    ? Math.min(maxCardW ?? s(250), (width - pad * 2 - gap * (items.length - 1)) / items.length)
+    : (maxCardW ?? 196);
+  const cardH = cardW * (ratio ?? (board ? 1.24 : 1.4));
   const contentW = board ? width : pad * 2 + items.length * cardW + (items.length - 1) * gap;
-  const sag = board ? s(60) : 34;
-  const ropeY = board ? s(24) : 20;
-  const height = ropeY + sag + cardH + s(40);
+  const sag = sagProp ?? (board ? s(60) : 34);
+  const ropeY = board ? s(22) : 20;
+  const height = ropeY + sag + cardH + s(28);
 
   // quadratic rope from just outside the left edge to just outside the right edge
   const x0 = -30;
@@ -59,7 +77,22 @@ export function HangingCards({ items, onPick, board, s }: Props) {
       const cx = startX + cardW / 2 + i * (cardW + gap);
       const r = ropeAt(cx);
       const tilt = (Math.atan(r.slope) * 180) / Math.PI * 0.6 + (i % 2 ? 2.5 : -2.5);
-      return <HangingCard key={it.key} item={it} x={cx - cardW / 2} clipY={r.y} w={cardW} h={cardH} tilt={tilt} index={i} onPress={() => onPick(it.key)} s={s} />;
+      return (
+        <HangingCard
+          key={it.key}
+          item={it}
+          x={cx - cardW / 2}
+          clipY={r.y}
+          w={cardW}
+          h={cardH}
+          artH={cardW * artRatio}
+          tilt={tilt}
+          index={i}
+          delayBase={delayBase}
+          onPress={() => onPick(it.key)}
+          s={s}
+        />
+      );
     });
 
   if (board) {
@@ -76,7 +109,7 @@ export function HangingCards({ items, onPick, board, s }: Props) {
         {width > 0 && rope}
         {cards}
       </ScrollView>
-      <Text style={styles.swipe}>Swipe for more games →</Text>
+      {showSwipe && <Text style={styles.swipe}>Swipe for more games →</Text>}
     </View>
   );
 }
@@ -87,8 +120,10 @@ function HangingCard({
   clipY,
   w,
   h,
+  artH,
   tilt,
   index,
+  delayBase,
   onPress,
   s,
 }: {
@@ -97,12 +132,16 @@ function HangingCard({
   clipY: number;
   w: number;
   h: number;
+  artH: number;
   tilt: number;
   index: number;
+  delayBase: number;
   onPress: () => void;
   s: (n: number) => number;
 }) {
   const motion = useMotion();
+  // ~0.58em per character in the display font; inner width = card minus padding
+  const titleSize = Math.max(s(13), Math.min(s(19), (w - s(20) - 8) / (item.title.length * 0.58)));
   // Entrance drop/swing and the tap "kick" are short one-off animations; the endless idle sway is
   // a GPU loop (Looping), so it costs nothing while the page sits open.
   const angle = useRef(new Animated.Value(motion ? tilt + (index % 2 ? -14 : 14) : tilt)).current;
@@ -115,7 +154,7 @@ function HangingCard({
       return;
     }
     const entrance = Animated.sequence([
-      Animated.delay(250 + index * 110),
+      Animated.delay(250 + delayBase + index * 110),
       Animated.parallel([
         Animated.spring(drop, { toValue: 0, friction: 6, tension: 70, useNativeDriver: NATIVE }),
         Animated.spring(angle, { toValue: tilt, friction: 2.2, tension: 26, useNativeDriver: NATIVE }),
@@ -181,12 +220,13 @@ function HangingCard({
           (hovered || pressed) && { transform: [{ scale: pressed ? 0.98 : 1.04 }] },
         ]}
       >
-        <View style={[styles.art, { backgroundColor: item.tint, borderRadius: s(12), height: w * 0.78 }]}>{item.art}</View>
+        <View style={[styles.art, { backgroundColor: item.tint, borderRadius: s(12), height: artH }]}>{item.art}</View>
         <View style={{ paddingHorizontal: 4, paddingTop: s(8), gap: 2, flex: 1 }}>
-          <Text style={[styles.title, { fontSize: s(19), lineHeight: s(23) }]} numberOfLines={1}>
+          {/* shrink long titles ("Name the Country") on narrow phone cards so they never cut off */}
+          <Text style={[styles.title, { fontSize: titleSize, lineHeight: titleSize * 1.2 }]} numberOfLines={1}>
             {item.title}
           </Text>
-          <Text style={[styles.subtitle, { fontSize: s(12.5) }]} numberOfLines={2}>
+          <Text style={[styles.subtitle, { fontSize: s(12.5) }]} numberOfLines={h / w < 1.1 ? 1 : 2}>
             {item.subtitle}
           </Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 'auto' }}>

@@ -150,7 +150,9 @@ export function quizOptions(map: MapDefinition, r: Region, n = 4): Region[] {
   const pool = map.data.regions.filter((x) => x.id !== r.id && x.playable);
   const near = shuffle((r.neighbors ?? []).map((id) => byId.get(id)).filter((x): x is Region => !!x && x.playable));
   const picks = near.slice(0, n - 1);
-  for (const x of shuffle(pool)) {
+  // then same continent / same kind of region, then anything
+  const sameGroup = shuffle(pool.filter((x) => x.group && x.group === r.group));
+  for (const x of [...sameGroup, ...shuffle(pool)]) {
     if (picks.length >= n - 1) break;
     if (!picks.includes(x)) picks.push(x);
   }

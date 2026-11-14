@@ -9,6 +9,7 @@ import { FocusIcon, GameTopBar, LegendLine, Pulse, RoundResults, StarsRow, StatP
 import { CompassRose, FlameIcon } from '../../components/icons';
 import { Looping } from '../../components/Looping';
 import { MapCanvas, type Attempt } from '../../components/MapCanvas';
+import { RegionHighlight } from '../../components/RegionHighlight';
 import { RegionShape, fitScale } from '../../components/RegionShape';
 import { Button, Card, Label, Pill } from '../../components/ui';
 import { getView, useMap, type MapDefinition, type Region } from '../../data/maps';
@@ -82,6 +83,10 @@ function PlayGame({ map }: { map: MapDefinition }) {
   const finished = index >= questions.length;
   const answer = answers.length > index ? answers[index] : undefined;
   const reviewing = !!answer;
+  // After a drop that wasn't perfect (or a skip) the student must drag the shape into its real
+  // spot before moving on. It earns no points; it's there so the right place sticks in memory.
+  const [fixed, setFixed] = useState(false);
+  const needsFix = reviewing && !fixed && (!answer?.placement || answer.placement.accuracy < 100);
 
   const scores = useMemo(() => {
     const out: Record<string, number> = {};
@@ -97,6 +102,7 @@ function PlayGame({ map }: { map: MapDefinition }) {
     setIndex(0);
     setAnswers([]);
     setAttempt(null);
+    setFixed(false);
     setStreak(0);
     setParty(null);
     setNewBest(false);
@@ -105,6 +111,7 @@ function PlayGame({ map }: { map: MapDefinition }) {
   const next = () => {
     playSfx('tap');
     setAttempt(null);
+    setFixed(false);
     setParty(null);
     setIndex((i) => i + 1);
   };
@@ -162,7 +169,7 @@ function PlayGame({ map }: { map: MapDefinition }) {
 
   // ---- drag & drop ----------------------------------------------------------
   const live = useRef({ locked: false });
-  live.current.locked = reviewing || finished || !current;
+  live.current.locked = (reviewing && !needsFix) || finished || !current;
 
   const pan = useRef(new Animated.ValueXY()).current;
   // On touch devices lift the piece above the finger so it stays visible.
@@ -208,7 +215,7 @@ function PlayGame({ map }: { map: MapDefinition }) {
 
   const handleDrop = useRef<(x: number, y: number) => void>(() => {});
   handleDrop.current = (pageX, pageY) => {
-    if (!current || reviewing) return;
+    if (!current || (reviewing && !needsFix)) return;
     const { svg } = origin.current;
     const mx = view.x + (pageX - svg.x) / scale;
     const my = view.y + (pageY - lift - svg.y) / scale;
@@ -219,6 +226,21 @@ function PlayGame({ map }: { map: MapDefinition }) {
     }
     const dx = mx - current.cx;
     const dy = my - current.cy;
+    if (needsFix) {
+      // practice drop: generous check, no points either way
+      const ok = measurePlacement(current, dx, dy, (SLACK_PX * 2) / scale).accuracy >= 50;
+      if (!ok) {
+        playSfx('wrong');
+        returnPiece();
+        return;
+      }
+      setDragging(false);
+      setFixed(true);
+      setAttempt(null);
+      playSfx('snap');
+      setParty({ kind: 'sparkle', origin: toRoot(current.cx, current.cy), caption: '', n: Date.now() });
+      return;
+    }
     setDragging(false);
     record(current, measurePlacement(current, dx, dy, SLACK_PX / scale), dx, dy);
   };
@@ -269,7 +291,7 @@ function PlayGame({ map }: { map: MapDefinition }) {
     <GameTopBar
       s={s}
       board={board}
-      title={`${map.title}${group ? ` · ${group}` : ''}`}
+      title={`${map.id === 'india' ? 'Drag the State' : 'World Explorer'}${group ? ` · ${group}` : ''}`}
       subtitle={mode === 'inline' ? 'Inline' : 'Outline'}
       done={answers.length}
       total={total}
@@ -297,7 +319,7 @@ function PlayGame({ map }: { map: MapDefinition }) {
       <ScrollView style={styles.panelScroll} contentContainerStyle={{ gap: board ? s(16) : 12 }} showsVerticalScrollIndicator={false}>
       <View style={board ? { gap: s(16) } : { flexDirection: 'row', alignItems: 'center', gap: 12 }}>
         <View style={board ? { gap: s(2) } : { flex: 1, gap: 2 }}>
-          <Label size={s(11)}>{reviewing ? 'Result' : `Find & place this ${map.unit}`}</Label>
+          <Label size={s(11)}>{needsFix ? 'Now place it correctly' : reviewing ? 'Result' : `Find & place this ${map.unit}`}</Label>
           <Text style={[styles.name, { fontSize: s(board ? 38 : 26), lineHeight: s(board ? 44 : 30) }]} numberOfLines={2}>
             {current.name}
           </Text>
@@ -315,17 +337,18 @@ function PlayGame({ map }: { map: MapDefinition }) {
           style={[
             styles.tray,
             { width: cardBox + s(28), height: cardBox + s(28), borderRadius: s(20) },
-            reviewing && { borderColor: colors.line, backgroundColor: colors.bg },
+            reviewing && !needsFix && { borderColor: colors.line, backgroundColor: colors.bg },
+            needsFix && { borderColor: colors.mint, backgroundColor: '#E8FBF3' },
             Platform.OS === 'web' &&
-              ({ cursor: reviewing ? 'default' : dragging ? 'grabbing' : 'grab', touchAction: 'none', userSelect: 'none' } as object),
+              ({ cursor: reviewing && !needsFix ? 'default' : dragging ? 'grabbing' : 'grab', touchAction: 'none', userSelect: 'none' } as object),
           ]}
           accessibilityLabel={`Shape of ${current.name}. Drag it onto the map.`}
         >
           {/* the piece gently bobs to invite a drag (GPU loop) */}
           <Looping
-            on={!dragging && !reviewing}
+            on={!dragging && (!reviewing || needsFix)}
             pointerEvents="none"
-            style={{ opacity: dragging || reviewing ? 0.2 : 1 }}
+            style={{ opacity: dragging || (reviewing && !needsFix) ? 0.2 : 1 }}
             from={{ transform: [{ translateY: 0 }] }}
             to={{ transform: [{ translateY: -6 }] }}
             duration={900}
@@ -338,9 +361,18 @@ function PlayGame({ map }: { map: MapDefinition }) {
       </View>
 
       {answer && <ResultBlock answer={answer} s={s} board={board} streak={streak} map={map} mode={mode} />}
+      {needsFix && (
+        <View style={[styles.fix, { padding: s(12), borderRadius: s(16), gap: s(4) }]}>
+          <Text style={[styles.fixTitle, { fontSize: s(15) }]}>Now drag {current.name} into the glowing spot</Text>
+          <Text style={[styles.sub, { fontSize: s(13) }]}>Placing it yourself helps you remember it. No points, just practice!</Text>
+        </View>
+      )}
+      {reviewing && fixed && (
+        <Text style={[styles.fixDone, { fontSize: s(14) }]}>Great, now you know where {current.name} is!</Text>
+      )}
       </ScrollView>
 
-      {reviewing ? (
+      {needsFix ? null : reviewing ? (
         <Button
           label={index + 1 >= total ? 'See results' : 'Next'}
           variant={answer?.placement && answer.placement.accuracy >= 100 ? 'sun' : 'primary'}
@@ -384,11 +416,22 @@ function PlayGame({ map }: { map: MapDefinition }) {
                   attempt={attempt}
                 />
               )}
+              {needsFix && current && scale > 0 && (
+                <RegionHighlight
+                  region={current}
+                  view={view}
+                  scale={scale}
+                  inset={{ left: (mapBox.w - view.w * scale) / 2, top: (mapBox.h - view.h * scale) / 2 }}
+                  color={colors.mint}
+                  rise={(Math.max(3, Math.min(9, scale * 9)) / scale) * 0.7}
+                  blink
+                />
+              )}
             </View>
             <View style={[styles.compass, { top: s(10), right: s(10) }]} pointerEvents="none">
               <CompassRose size={s(board ? 58 : 42)} />
             </View>
-            {reviewing && answer?.placement && (
+            {reviewing && answer?.placement && attempt && (
               <View style={[styles.mapLegend, { padding: s(8), gap: s(12) }]} pointerEvents="none">
                 <LegendLine color={colors.primary} label="Your drop" size={s(12)} dashed />
                 <LegendLine color={colors.mint} label="Real place" size={s(12)} />
@@ -516,6 +559,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.92)',
     borderRadius: 12,
   },
+  fix: { backgroundColor: '#E8FBF3', borderWidth: 2, borderColor: '#A6EBCB' },
+  fixTitle: { fontFamily: fonts.black, color: '#0F7A50' },
+  fixDone: { fontFamily: fonts.bodyBold, color: '#0F7A50' },
   sheet: { marginHorizontal: 10, marginBottom: 8, padding: 14, maxHeight: '64%' },
   panel: { flexShrink: 1, overflow: 'hidden' },
   panelScroll: { flexGrow: 0, flexShrink: 1 },
