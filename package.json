@@ -25,6 +25,8 @@
     "@types/d3-geo": "^3.1.1",
     "@types/react": "~19.3.0",
     "d3-geo": "^3.1.2",
+    "eslint": "^9.0.0",
+    "eslint-config-expo": "~58.0.4",
     "topojson-client": "^3.1.0",
     "topojson-server": "^3.0.1",
     "topojson-simplify": "^3.0.3",
@@ -38,7 +40,8 @@
     "web": "expo start --web",
     "build:maps": "node scripts/build-maps.mjs",
     "typecheck": "tsc --noEmit",
-    "build:web": "expo export -p web"
+    "build:web": "expo export -p web",
+    "lint": "expo lint"
   },
   "private": true,
   "engines": {
