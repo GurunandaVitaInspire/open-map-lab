@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { memo, useEffect, useMemo, useRef, useState, type ComponentRef, type ReactNode } from 'react';
+import { Animated, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Svg, { G, Path, Rect } from 'react-native-svg';
+import { IS_WEB } from '../../lib/cssAnim';
+import { haptic } from '../../lib/feel';
 import { useMotion } from '../../lib/motion';
+import { playSfx } from '../../lib/sound';
 import { colors, fonts } from '../../theme';
 import { StarIcon } from '../icons';
 import { Looping } from '../Looping';
-import { makeCable, type Cable } from './cable';
+import { makeCable } from './cable';
 
 const NATIVE = Platform.OS !== 'web';
 
@@ -43,8 +46,11 @@ type Props = {
  * Polaroid-style game cards pegged to a cable, like cars on a cable-car line. The cable hangs by
  * real physics (see cable.ts): straight stretches between cards and a bend at each card under its
  * weight. As each card drops in, its weight lands on the cable, which dips and bounces, carrying
- * the other cards with it. Cards sway gently around their clips; a tap kicks the card and jolts
- * the cable.
+ * the other cards with it.
+ *
+ * The rope is also a toy: grab it anywhere and pull it up or down. It bends at your finger, the
+ * cards ride along and tilt with it (their pegs clamp them to the rope), they swing and shake as
+ * it moves, and when you let go it springs back and bounces until it settles.
  */
 export function HangingCards({ items, onPick, board, s, maxCardW, ratio, artRatio = 0.78, sag: sagProp, delayBase = 0, showSwipe = true }: Props) {
   const [width, setWidth] = useState(0);
@@ -57,7 +63,8 @@ export function HangingCards({ items, onPick, board, s, maxCardW, ratio, artRati
   const contentW = board ? width : pad * 2 + items.length * cardW + (items.length - 1) * gap;
   const sag = sagProp ?? (board ? s(60) : 34);
   const ropeY = board ? s(22) : 20;
-  const height = ropeY + sag + cardH + s(28);
+  // phones: a little extra room below, because the swipeable row clips anything past its edge
+  const height = ropeY + sag + cardH + s(28) + (board ? 0 : 22);
 
   // the cable is fixed just outside the left and right edges
   const x0 = -30;
@@ -70,20 +77,65 @@ export function HangingCards({ items, onPick, board, s, maxCardW, ratio, artRati
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [x0, x1, cxKey, sag],
   );
+  const rest = useMemo(() => items.map(() => 1), [items.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // each card's weight on the cable: 0 until the card lands, then it springs to 1 (a little bounce).
-  // The current weights are tracked from the moment they exist, so the rope always draws what the
-  // cards feel, however late it appears (slow devices, background tabs).
+  // Everything that moves the rope lives in one store: each card's weight (0 until it lands, then
+  // it springs to 1) and a hand pulling the rope. The current numbers are kept from the moment the
+  // store exists, so the rope always shows what the cards feel, however late it is drawn.
   const motion = useMotion();
-  const [store] = useState(() => makeLoadStore(items.length, motion ? 0 : 1));
-  const loads = store.values;
+  const [store] = useState(() => makeStore(items.length, motion ? 0 : 1));
+
+  // One frame loop draws the rope, places the cards on it and swings them, all in the same frame.
+  const [, setFrame] = useState(0);
+  const sim = useRef({ th: items.map(() => 0), om: items.map(() => 0), raf: 0, last: 0, dirty: true });
+  const geo = useRef({ cable, cxs, rest });
+  geo.current = { cable, cxs, rest };
+  useEffect(() => {
+    const st = sim.current;
+    const step = (t: number) => {
+      const dt = st.last ? Math.min(0.034, (t - st.last) / 1000) : 1 / 60;
+      st.last = t;
+      const { cable: c, cxs: xs, rest: r } = geo.current;
+      const pull = store.pullF ? { x: store.pullX, f: store.pullF } : undefined;
+      let busy = st.dirty;
+      st.dirty = false;
+      xs.forEach((x, j) => {
+        // the peg clamps the card to the rope: it wants to tilt as much as the rope tilts there…
+        const lean = (Math.atan(c.slopeAt(x, store.now, pull)) - Math.atan(c.slopeAt(x, r))) * (180 / Math.PI) * 0.9;
+        const target = Math.max(-MAX_TILT, Math.min(MAX_TILT, lean)); // a peg twists only so far
+        // …but a card is heavy and springy, so it lags, overshoots and shakes (a damped swing)
+        const acc = -SWING_K * (st.th[j] - target) - SWING_C * st.om[j];
+        st.om[j] += acc * dt;
+        st.th[j] += st.om[j] * dt;
+        if (Math.abs(st.th[j] - target) > 0.03 || Math.abs(st.om[j]) > 0.08) busy = true;
+      });
+      setFrame((n) => (n + 1) % 1e6);
+      st.raf = busy ? requestAnimationFrame(step) : 0;
+    };
+    const wake = () => {
+      st.dirty = true;
+      if (!st.raf) {
+        st.last = 0;
+        st.raf = requestAnimationFrame(step);
+      }
+    };
+    store.subs.add(wake);
+    wake();
+    return () => {
+      store.subs.delete(wake);
+      cancelAnimationFrame(st.raf);
+      st.raf = 0;
+    };
+  }, [store]);
+
+  // cards landing: each one's weight springs onto the cable (a little bounce)
   useEffect(() => {
     if (!motion) {
-      loads.forEach((l) => l.setValue(1));
+      store.loads.forEach((l) => l.setValue(1));
       return;
     }
     const landing = Animated.parallel(
-      loads.map((l, i) =>
+      store.loads.map((l, i) =>
         Animated.sequence([
           Animated.delay(250 + delayBase + i * 110 + 160),
           Animated.spring(l, { toValue: 1, stiffness: 150, damping: 7.5, mass: 1, useNativeDriver: false }),
@@ -95,60 +147,169 @@ export function HangingCards({ items, onPick, board, s, maxCardW, ratio, artRati
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [motion]);
 
-  /** a tap jolts the cable at that card, and the whole line bounces */
-  const bump = (i: number) => {
-    if (!motion) return;
-    Animated.sequence([
-      Animated.timing(loads[i], { toValue: 1.5, duration: 90, useNativeDriver: false }),
-      Animated.spring(loads[i], { toValue: 1, stiffness: 150, damping: 6, mass: 1, useNativeDriver: false }),
-    ]).start();
+  // ---- pulling the rope -------------------------------------------------------------------
+  const grab = useRef({ on: false, x: 0, y: 0 });
+  const live = useRef({ ropeY, x0, x1, height, motion, sag, board });
+  live.current = { ropeY, x0, x1, height, motion, sag, board };
+  /** where the rope is at x right now (px from the top of this row) */
+  const ropeAt = (x: number) => {
+    const pull = store.pullF ? { x: store.pullX, f: store.pullF } : undefined;
+    return live.current.ropeY + geo.current.cable.dipAt(x, store.now, pull);
   };
+  const near = (x: number, y: number) => Math.abs(y - ropeAt(x)) < GRAB_PX;
+  const nearRef = useRef(near);
+  nearRef.current = near;
+  /** bend the rope so it passes through (x, y), as if a hand held it there */
+  const holdAt = (x: number, y: number) => {
+    const { cable: c } = geo.current;
+    const base = live.current.ropeY + c.dipAt(x, store.now);
+    store.moveHand(x);
+    store.pull.setValue((y - base) / Math.max(c.influence(x, x), 1e-6));
+  };
+  const holdRef = useRef(holdAt);
+  holdRef.current = holdAt;
 
-  // how far each card rides below its resting spot while the cable moves: the cable's height at
-  // card j depends linearly on every card's load, so this is a weighted sum of (load - 1)
-  const rides = useMemo(() => {
-    const zero = items.map(() => 0);
-    return cxs.map((xj) => {
-      const terms = loads.map((l, i) => {
-        const unit = items.map((_, k) => (k === i ? 1 : 0));
-        const c = cable.dipAt(xj, unit) - cable.dipAt(xj, zero);
-        return Animated.multiply(Animated.add(l, -1), c);
-      });
-      let sum: Animated.AnimatedAddition | Animated.AnimatedMultiplication = terms[0];
-      for (const t of terms.slice(1)) sum = Animated.add(sum, t);
-      return sum;
-    });
+  const responder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: (e) => nearRef.current(e.nativeEvent.locationX, e.nativeEvent.locationY),
+        onMoveShouldSetPanResponder: () => false,
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderGrant: (e) => {
+          const { x0: a, x1: b } = live.current;
+          store.pull.stopAnimation();
+          const x = Math.max(a + 12, Math.min(b - 12, e.nativeEvent.locationX));
+          const y = ropeAtRef.current(x); // take hold of the rope where it is (no jump)
+          grab.current = { on: true, x, y };
+          holdRef.current(x, y);
+          haptic.pick();
+          playSfx('pickup');
+        },
+        onPanResponderMove: (_e, g) => {
+          const { x0: a, x1: b, ropeY: top, height: h, sag: dip, board: big } = live.current;
+          const x = Math.max(a + 12, Math.min(b - 12, grab.current.x + g.dx));
+          // how far the rope can be lifted or pulled down (less on phones, where the row clips)
+          const lo = top - (big ? 70 : 30);
+          const hi = big ? h - 10 : top + dip + 40;
+          const y = Math.max(lo, Math.min(hi, grab.current.y + g.dy));
+          holdRef.current(x, y);
+        },
+        onPanResponderRelease: (_e, g) => let_go(g.vy),
+        onPanResponderTerminate: () => let_go(0),
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cable, loads]);
+    [store],
+  );
+  const ropeAtRef = useRef(ropeAt);
+  ropeAtRef.current = ropeAt;
+  /** let go: the rope springs back and bounces (keeping the speed it was thrown with) */
+  function let_go(vy: number) {
+    if (!grab.current.on) return;
+    grab.current.on = false;
+    const { cable: c } = geo.current;
+    const perPx = Math.max(c.influence(store.pullX, store.pullX), 1e-6);
+    const velocity = (vy * 1000) / perPx; // px/ms → pull units per second
+    if (live.current.motion) Animated.spring(store.pull, { toValue: 0, velocity, stiffness: 120, damping: 4.2, mass: 1, useNativeDriver: false }).start();
+    else Animated.timing(store.pull, { toValue: 0, duration: 200, useNativeDriver: false }).start();
+    playSfx('drop');
+  }
 
-  const rest = items.map(() => 1);
-  const rope = <Rope cable={cable} store={store} top={ropeY} width={contentW} height={height} />;
+  // web: show a grab hand over the rope, and keep the page from scrolling when a finger takes it
+  const band = useRef<ComponentRef<typeof View>>(null);
+  useEffect(() => {
+    if (!IS_WEB) return;
+    const el = band.current as unknown as HTMLElement | null;
+    if (!el?.addEventListener) return;
+    const local = (cx: number, cy: number) => {
+      const r = el.getBoundingClientRect();
+      return [cx - r.left, cy - r.top] as const;
+    };
+    const hover = (ev: PointerEvent) => {
+      const [x, y] = local(ev.clientX, ev.clientY);
+      el.style.cursor = grab.current.on ? 'grabbing' : nearRef.current(x, y) ? 'grab' : '';
+    };
+    const touch = (ev: TouchEvent) => {
+      const t = ev.touches[0];
+      if (!t) return;
+      const [x, y] = local(t.clientX, t.clientY);
+      if (nearRef.current(x, y)) ev.preventDefault(); // no page scroll while holding the rope
+    };
+    const press = (ev: MouseEvent) => {
+      const [x, y] = local(ev.clientX, ev.clientY);
+      if (nearRef.current(x, y)) ev.preventDefault(); // no text selection while pulling with a mouse
+    };
+    el.addEventListener('pointermove', hover);
+    el.addEventListener('touchstart', touch, { passive: false });
+    el.addEventListener('mousedown', press);
+    return () => {
+      el.removeEventListener('pointermove', hover);
+      el.removeEventListener('touchstart', touch);
+      el.removeEventListener('mousedown', press);
+    };
+  }, [width > 0]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** a tap on a card jolts the cable at that card, and the whole line bounces */
+  const press = useMemo(
+    () =>
+      items.map((it, i) => () => {
+        if (motion) {
+          Animated.sequence([
+            Animated.timing(store.loads[i], { toValue: 1.5, duration: 90, useNativeDriver: false }),
+            Animated.spring(store.loads[i], { toValue: 1, stiffness: 150, damping: 6, mass: 1, useNativeDriver: false }),
+          ]).start();
+        }
+        onPick(it.key);
+      }),
+    [items, onPick, motion, store],
+  );
+
+  // ---- draw this frame --------------------------------------------------------------------
+  const pullNow = store.pullF ? { x: store.pullX, f: store.pullF } : undefined;
+  const rope = <Rope d={cable.path(ropeY, store.now, pullNow)} width={contentW} height={height} />;
+  const grabBand = <View ref={band} style={StyleSheet.absoluteFill} {...responder.panHandlers} />;
 
   const cards =
     width > 0 &&
     items.map((it, i) => {
       const cx = cxs[i];
+      const clipY = ropeY + cable.dipAt(cx, rest);
+      const ride = cable.dipAt(cx, store.now, pullNow) - cable.dipAt(cx, rest);
       // cards hang plumb from their pegs, with a hint of the cable's slope and a playful lean
       const tilt = ((Math.atan(cable.slopes[i]) * 180) / Math.PI) * 0.35 + (i % 2 ? 1.8 : -1.8);
+      // swing around the peg (transforms pivot on the layer's centre, so measure from there)
+      const px = cx - contentW / 2;
+      const py = clipY - height / 2;
       return (
-        <Animated.View key={it.key} pointerEvents="box-none" style={[StyleSheet.absoluteFill, { transform: [{ translateY: rides[i] }] }]}>
+        <View
+          key={it.key}
+          pointerEvents="box-none"
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              transform: [
+                { translateX: px },
+                { translateY: py + ride },
+                { rotate: `${sim.current.th[i].toFixed(2)}deg` },
+                { translateX: -px },
+                { translateY: -py },
+              ],
+            },
+          ]}
+        >
           <HangingCard
             item={it}
             x={cx - cardW / 2}
-            clipY={ropeY + cable.dipAt(cx, rest)}
+            clipY={clipY}
             w={cardW}
             h={cardH}
             artH={cardW * artRatio}
             tilt={tilt}
             index={i}
             delayBase={delayBase}
-            onPress={() => {
-              bump(i);
-              onPick(it.key);
-            }}
+            onPress={press[i]}
             s={s}
           />
-        </Animated.View>
+        </View>
       );
     });
 
@@ -156,6 +317,7 @@ export function HangingCards({ items, onPick, board, s, maxCardW, ratio, artRati
     return (
       <View style={{ height }} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
         {width > 0 && rope}
+        {grabBand}
         {cards}
       </View>
     );
@@ -164,6 +326,7 @@ export function HangingCards({ items, onPick, board, s, maxCardW, ratio, artRati
     <View onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ width: contentW, height }}>
         {width > 0 && rope}
+        {grabBand}
         {cards}
       </ScrollView>
       {showSwipe && <Text style={styles.swipe}>Swipe for more games →</Text>}
@@ -171,46 +334,56 @@ export function HangingCards({ items, onPick, board, s, maxCardW, ratio, artRati
   );
 }
 
-type LoadStore = { values: Animated.Value[]; now: number[]; subs: Set<() => void> };
+/** how close (px) a finger or mouse must be to the rope to take hold of it */
+const GRAB_PX = 24;
+/** the most a peg lets a card twist while the rope is pulled (degrees) */
+const MAX_TILT = 22;
+/** card swing: stiffness and damping of the peg (a low damping ratio, so they shake a few times) */
+const SWING_K = 170;
+const SWING_C = 4.4;
 
-/** Animated weights plus a plain copy of their current values, kept in sync from creation. */
-function makeLoadStore(n: number, start: number): LoadStore {
-  const now = Array.from({ length: n }, () => start);
+type Store = {
+  loads: Animated.Value[];
+  now: number[];
+  pull: Animated.Value;
+  pullF: number;
+  pullX: number;
+  subs: Set<() => void>;
+  /** where along the rope the hand is (px) */
+  moveHand: (x: number) => void;
+};
+
+/** Animated values plus a plain copy of their current numbers, kept in sync from creation. */
+function makeStore(n: number, start: number): Store {
   const subs = new Set<() => void>();
-  const values = now.map((v, i) => {
+  const store: Store = {
+    loads: [],
+    now: Array.from({ length: n }, () => start),
+    pull: new Animated.Value(0),
+    pullF: 0,
+    pullX: 0,
+    subs,
+    moveHand: (x) => {
+      store.pullX = x;
+    },
+  };
+  store.loads = store.now.map((v, i) => {
     const av = new Animated.Value(v);
     av.addListener(({ value }) => {
-      now[i] = value;
+      store.now[i] = value;
       subs.forEach((f) => f());
     });
     return av;
   });
-  return { values, now, subs };
+  store.pull.addListener(({ value }) => {
+    store.pullF = Math.abs(value) < 1e-4 ? 0 : value;
+    subs.forEach((f) => f());
+  });
+  return store;
 }
 
-/**
- * The cable itself: a twisted jute rope with a soft shadow. It only re-renders while a load is
- * changing (cards landing or a tap), at most once per frame.
- */
-function Rope({ cable, store, top, width, height }: { cable: Cable; store: LoadStore; top: number; width: number; height: number }) {
-  const [vals, setVals] = useState(() => [...store.now]);
-  useEffect(() => {
-    let raf = 0;
-    const sync = () => {
-      if (!raf)
-        raf = requestAnimationFrame(() => {
-          raf = 0;
-          setVals([...store.now]);
-        });
-    };
-    store.subs.add(sync);
-    sync(); // catch up with anything that happened before the rope appeared
-    return () => {
-      store.subs.delete(sync);
-      cancelAnimationFrame(raf);
-    };
-  }, [store]);
-  const d = cable.path(top, vals);
+/** The cable itself: a twisted jute rope with a soft shadow. */
+const Rope = memo(function Rope({ d, width, height }: { d: string; width: number; height: number }) {
   return (
     <Svg width={width} height={height} style={StyleSheet.absoluteFill} pointerEvents="none">
       <G transform="translate(0 3.5)">
@@ -224,9 +397,9 @@ function Rope({ cable, store, top, width, height }: { cable: Cable; store: LoadS
       </G>
     </Svg>
   );
-}
+});
 
-function HangingCard({
+const HangingCard = memo(function HangingCard({
   item,
   x,
   clipY,
@@ -352,7 +525,7 @@ function HangingCard({
       </Looping>
     </Animated.View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   clipWrap: { position: 'absolute', zIndex: 2 },
